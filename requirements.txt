@@ -1,0 +1,23 @@
+beautifulsoup4==4.7.1
+boto3==1.14.62
+-e git+https://github.com/facebookresearch/DrQA.git@3fe64a5eb15935783a790cfaa811c74136805316#egg=drqa
+nltk==3.5
+numpy
+pandas==1.1.2
+PyYAML==5.1
+regex==2020.7.14
+requests
+scikit-learn==0.23.2
+scipy==1.5.2
+sentencepiece==0.1.92
+spacy==2.3.2
+tensorboardX==2.1
+termcolor==1.1.0
+tokenizers==0.8.1rc2
+torch==1.1.0
+tqdm
+traitlets==4.3.2
+ujson==3.2.0
+urllib3==1.24.2
+filelock
+sacremoses
