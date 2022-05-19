@@ -21,11 +21,24 @@ import logging
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss, MSELoss
+import numpy as np
 
-from .configuration_roberta import RobertaConfig
+from .configuration_adapter_roberta import AdapterRobertaConfig
+from .modeling_utils_shared_hgn import PreTrainedModel, prune_linear_layer
+from .hgn_graph_model import HierarchicalGraphNetwork
+
+from collections import OrderedDict, UserDict
+from collections.abc import MutableMapping
+from contextlib import ExitStack
+from enum import Enum
+from typing import Any, ContextManager, List, Tuple
+from typing import Optional, Tuple
+
 from .file_utils import add_start_docstrings
-from .modeling_bert import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
+from .modeling_adapter_bert import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
 
+from .HGN import HierarchicalGraphNetwork
+from .HGN_layers import PredictionLayer
 
 logger = logging.getLogger(__name__)
 
@@ -118,57 +131,12 @@ ROBERTA_START_DOCSTRING = r"""    The RoBERTa model was proposed in
             Check out the :meth:`~transformers.PreTrainedModel.from_pretrained` method to load the model weights.
 """
 
-ROBERTA_INPUTS_DOCSTRING = r"""
-    Inputs:
-        **input_ids**: ``torch.LongTensor`` of shape ``(batch_size, sequence_length)``:
-            Indices of input sequence tokens in the vocabulary.
-            To match pre-training, RoBERTa input sequence should be formatted with <s> and </s> tokens as follows:
 
-            (a) For sequence pairs:
-
-                ``tokens:         <s> Is this Jacksonville ? </s> </s> No it is not . </s>``
-
-            (b) For single sequences:
-
-                ``tokens:         <s> the dog is hairy . </s>``
-
-            Fully encoded sequences or sequence pairs can be obtained using the RobertaTokenizer.encode function with
-            the ``add_special_tokens`` parameter set to ``True``.
-
-            RoBERTa is a model with absolute position embeddings so it's usually advised to pad the inputs on
-            the right rather than the left.
-
-            See :func:`transformers.PreTrainedTokenizer.encode` and
-            :func:`transformers.PreTrainedTokenizer.convert_tokens_to_ids` for details.
-        **attention_mask**: (`optional`) ``torch.FloatTensor`` of shape ``(batch_size, sequence_length)``:
-            Mask to avoid performing attention on padding token indices.
-            Mask values selected in ``[0, 1]``:
-            ``1`` for tokens that are NOT MASKED, ``0`` for MASKED tokens.
-        **token_type_ids**: (`optional` need to be trained) ``torch.LongTensor`` of shape ``(batch_size, sequence_length)``:
-            Optional segment token indices to indicate first and second portions of the inputs.
-            This embedding matrice is not trained (not pretrained during RoBERTa pretraining), you will have to train it
-            during finetuning.
-            Indices are selected in ``[0, 1]``: ``0`` corresponds to a `sentence A` token, ``1``
-            corresponds to a `sentence B` token
-            (see `BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding`_ for more details).
-        **position_ids**: (`optional`) ``torch.LongTensor`` of shape ``(batch_size, sequence_length)``:
-            Indices of positions of each input sequence tokens in the position embeddings.
-            Selected in the range ``[0, config.max_position_embeddings - 1]``.
-        **head_mask**: (`optional`) ``torch.FloatTensor`` of shape ``(num_heads,)`` or ``(num_layers, num_heads)``:
-            Mask to nullify selected heads of the self-attention modules.
-            Mask values selected in ``[0, 1]``:
-            ``1`` indicates the head is **not masked**, ``0`` indicates the head is **masked**.
-        **inputs_embeds**: (`optional`) ``torch.FloatTensor`` of shape ``(batch_size, sequence_length, embedding_dim)``:
-            Optionally, instead of passing ``input_ids`` you can choose to directly pass an embedded representation.
-            This is useful if you want more control over how to convert `input_ids` indices into associated vectors
-            than the model's internal embedding lookup matrix.
-"""
 
 
 @add_start_docstrings(
     "The bare RoBERTa Model transformer outputting raw hidden-states without any specific head on top.",
     ROBERTA_START_DOCSTRING,
-    ROBERTA_INPUTS_DOCSTRING,
 )
 class RobertaModel(BertModel):
     r"""
@@ -199,12 +167,12 @@ class RobertaModel(BertModel):
         last_hidden_states = outputs[0]  # The last hidden-state is the first element of the output tuple
 
     """
-    config_class = RobertaConfig
+    config_class = AdapterRobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
-    def __init__(self, config):
-        super(RobertaModel, self).__init__(config)
+    def __init__(self, config, hgn):
+        super(RobertaModel, self).__init__(config, hgn)
 
         self.embeddings = RobertaEmbeddings(config)
         self.init_weights()
@@ -217,7 +185,7 @@ class RobertaModel(BertModel):
 
 
 @add_start_docstrings(
-    """RoBERTa Model with a `language modeling` head on top. """, ROBERTA_START_DOCSTRING, ROBERTA_INPUTS_DOCSTRING
+    """RoBERTa Model with a `language modeling` head on top. """, ROBERTA_START_DOCSTRING
 )
 class RobertaForMaskedLM(BertPreTrainedModel):
     r"""
@@ -249,7 +217,7 @@ class RobertaForMaskedLM(BertPreTrainedModel):
         loss, prediction_scores = outputs[:2]
 
     """
-    config_class = RobertaConfig
+    config_class = AdapterRobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
@@ -321,7 +289,6 @@ class RobertaLMHead(nn.Module):
     """RoBERTa Model transformer with a sequence classification/regression head on top (a linear layer
     on top of the pooled output) e.g. for GLUE tasks. """,
     ROBERTA_START_DOCSTRING,
-    ROBERTA_INPUTS_DOCSTRING,
 )
 class RobertaForSequenceClassification(BertPreTrainedModel):
     r"""
@@ -354,7 +321,7 @@ class RobertaForSequenceClassification(BertPreTrainedModel):
         loss, logits = outputs[:2]
 
     """
-    config_class = RobertaConfig
+    config_class = AdapterRobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
@@ -404,7 +371,7 @@ class RobertaForSequenceClassification(BertPreTrainedModel):
     """Roberta Model with a multiple choice classification head on top (a linear layer on top of
     the pooled output and a softmax) e.g. for RocStories/SWAG tasks. """,
     ROBERTA_START_DOCSTRING,
-    ROBERTA_INPUTS_DOCSTRING,
+    
 )
 class RobertaForMultipleChoice(BertPreTrainedModel):
     r"""
@@ -476,7 +443,7 @@ class RobertaForMultipleChoice(BertPreTrainedModel):
         loss, classification_scores = outputs[:2]
 
     """
-    config_class = RobertaConfig
+    config_class = AdapterRobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
@@ -532,7 +499,6 @@ class RobertaForMultipleChoice(BertPreTrainedModel):
     """Roberta Model with a token classification head on top (a linear layer on top of
     the hidden-states output) e.g. for Named-Entity-Recognition (NER) tasks. """,
     ROBERTA_START_DOCSTRING,
-    ROBERTA_INPUTS_DOCSTRING,
 )
 class RobertaForTokenClassification(BertPreTrainedModel):
     r"""
@@ -563,7 +529,7 @@ class RobertaForTokenClassification(BertPreTrainedModel):
         loss, scores = outputs[:2]
 
     """
-    config_class = RobertaConfig
+    config_class = AdapterRobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
@@ -641,7 +607,6 @@ class RobertaClassificationHead(nn.Module):
     """Roberta Model with a span classification head on top for extractive question-answering tasks like SQuAD (a linear layers on top of
     the hidden-states output to compute `span start logits` and `span end logits`). """,
     ROBERTA_START_DOCSTRING,
-    ROBERTA_INPUTS_DOCSTRING,
 )
 class RobertaForQuestionAnswering(BertPreTrainedModel):
     r"""
@@ -676,7 +641,7 @@ class RobertaForQuestionAnswering(BertPreTrainedModel):
         all_tokens = tokenizer.convert_ids_to_tokens(input_ids)
         answer = ' '.join(all_tokens[torch.argmax(start_scores) : torch.argmax(end_scores)+1])
     """
-    config_class = RobertaConfig
+    config_class = AdapterRobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
@@ -734,3 +699,60 @@ class RobertaForQuestionAnswering(BertPreTrainedModel):
             outputs = (total_loss,) + outputs
 
         return outputs  # (loss), start_logits, end_logits, (hidden_states), (attentions)
+
+
+class AdapterGraphQA(torch.nn.Module):
+    def __init__(self, pretrained_weights, args):
+        super().__init__()     
+
+        # HGN
+        self.hgn = HierarchicalGraphNetwork(args)
+        
+        # Transformer Encoder
+        self.encoder = RobertaModel.from_pretrained(pretrained_weights, hgn=self.hgn)
+        # hgn is shared across the layers of the transformer encoder
+        self.hidden_size = self.encoder.config.hidden_size
+
+        # Span Prediction
+        q_dim = self.hidden_dim if args.q_update else args.input_dim
+        self.predict_layer = PredictionLayer(args, q_dim)
+
+    def forward(
+            self,
+            batch,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            return_yp=True,
+        ):
+            r"""
+            start_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+                Labels for position (index) of the start of the labelled span for computing the token classification loss.
+                Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+                are not taken into account for computing the loss.
+            end_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+                Labels for position (index) of the end of the labelled span for computing the token classification loss.
+                Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+                are not taken into account for computing the loss.
+            """
+            # 1) get transformer token embeddings
+            (transformer_output, para_predictions, sent_predictions, sent_logits, ent_predictions) = self.encoder(
+                batch,
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+            )
+            predictions = self.predict_layer(batch, transformer_output[0], sent_logits[-1], packing_mask=batch['query_mapping'], return_yp=return_yp)
+
+            if return_yp:
+                start, end, q_type, yp1, yp2 = predictions
+                return start, end, q_type, para_predictions[-1], sent_predictions[-1], ent_predictions[-1], yp1, yp2
+            else:
+                start, end, q_type = predictions
+                return start, end, q_type, para_predictions[-1], sent_predictions[-1], ent_predictions[-1]

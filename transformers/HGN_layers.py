@@ -5,9 +5,7 @@ import torch.nn.functional as F
 from torch.nn.utils import rnn
 from torch.autograd import Variable
 
-from transformers.modeling_bert import BertLayer, gelu
-# from csr_mhqa.utils import get_weights, get_act
-
+from .modeling_bert import BertLayer, gelu
 
 def tok_to_ent(tok2ent):
     if tok2ent == 'mean':
@@ -446,7 +444,7 @@ class PredictionLayer(nn.Module):
     def __init__(self, config, q_dim):
         super(PredictionLayer, self).__init__()
         self.config = config
-        input_dim = config.ctx_attn_hidden_dim
+        input_dim = config.input_dim
         h_dim = config.hidden_dim
 
         self.hidden = h_dim
@@ -475,6 +473,7 @@ class PredictionLayer(nn.Module):
         sp_forward = torch.bmm(sent_mapping, sent_logits).contiguous()  # N x max_seq_len x 1
 
         start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
+        start_prediction = start_prediction - 1e30 * (1 - context_mask)  # N x L
         end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
         type_prediction = self.type_linear(context_input[:, 0, :])
 

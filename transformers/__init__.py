@@ -22,6 +22,8 @@ import logging
 from .configuration_albert import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, AlbertConfig
 from .configuration_auto import ALL_PRETRAINED_CONFIG_ARCHIVE_MAP, AutoConfig
 from .configuration_bert import BERT_PRETRAINED_CONFIG_ARCHIVE_MAP, BertConfig
+from .configuration_adapter_bert import BERT_PRETRAINED_CONFIG_ARCHIVE_MAP, AdapterBertConfig
+from .configuration_adapter_roberta import ROBERTA_PRETRAINED_CONFIG_ARCHIVE_MAP, AdapterRobertaConfig
 from .configuration_camembert import CAMEMBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, CamembertConfig
 from .configuration_ctrl import CTRL_PRETRAINED_CONFIG_ARCHIVE_MAP, CTRLConfig
 from .configuration_distilbert import DISTILBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, DistilBertConfig
@@ -152,6 +154,12 @@ if is_torch_available():
         BertForQuestionAnswering,
         load_tf_weights_in_bert,
         BERT_PRETRAINED_MODEL_ARCHIVE_MAP,
+    )
+    from .modeling_adapter_roberta import (
+        AdapterGraphQA,
+    )
+    from .modeling_adapter_roberta_small_gat import (
+        AdapterGraphQA_small_gat,
     )
     from .modeling_openai import (
         OpenAIGPTPreTrainedModel,
