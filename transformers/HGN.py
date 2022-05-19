@@ -29,7 +29,7 @@ class HierarchicalGraphNetwork(nn.Module):
 
         self.ctx_attention = GatedAttention(input_dim=config.hidden_dim*2,
                                             memory_dim=config.hidden_dim if config.q_update else config.hidden_dim*2,
-                                            hid_dim=self.config.ctx_attn_hidden_dim,
+                                            hid_dim=self.config.hidden_dim,
                                             dropout=config.bi_attn_drop,
                                             gate_method=self.config.ctx_attn)
 
