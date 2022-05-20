@@ -99,12 +99,12 @@ class AdapterBertConfig(PretrainedConfig):
         q_attn=True,
         lstm_drop=0.3,
         bi_attn_drop=0.3,
-        q_update=False,
-        num_gnn_heads=2,
+        q_update=True,
+        num_gnn_heads=1,
         gnn_drop=0.3,
-        num_edge_type=8,
+        num_edge_type=1,
         trans_drop=0.2,
-        device='cpu',
+        device='cuda',
         **kwargs
     ):
         super(AdapterBertConfig, self).__init__(**kwargs)

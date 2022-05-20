@@ -38,6 +38,7 @@ from contextlib import ExitStack
 from enum import Enum
 from typing import Any, ContextManager, List, Tuple
 from typing import Optional, Tuple
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -394,11 +395,13 @@ class StructAdapter(nn.Module):
         super().__init__()
         self.gnn = HierarchicalGraphNetwork(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.wo = nn.Linear(config.intermediate_size*2, config.hidden_size, bias=False)
+        self.wo = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
 
     def forward(self, layer_output_graph, batch):
+        # start = time.time()
         graph_output = self.gnn(layer_output_graph, batch)
-        
+        # end = time.time()
+        # logger.info(f"Graph network took {end - start} seconds")
         x = graph_output['graph_state']
         y = F.elu(x)
         y = self.dropout(y)
@@ -509,7 +512,7 @@ class BertLayer(nn.Module):
         #### Top Adapter
         graph_output = self.adapter_graph_top(layer_output_graph, batch)
         layer_output_text = self.adapter_text_top(layer_output_text)
-        
+
         #### Fusing Adapter
         layer_output, _ = self.fusing_layer(layer_output_text, graph_output['graph_state'], graph_output['node_mask'].squeeze(-1))
 
@@ -777,7 +780,6 @@ class BertModel(BertPreTrainedModel):
     def __init__(self, config):
         super(BertModel, self).__init__(config)
         self.config = config
-
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)

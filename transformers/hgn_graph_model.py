@@ -1,12 +1,14 @@
+from turtle import end_fill
 import torch
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
 from torch.nn.utils import rnn
 from torch.autograd import Variable
-
+import time
 from transformers.modeling_bert import BertLayer, gelu
-
+import logging
+logger = logging.getLogger(__name__)
 
 
 class HierarchicalGraphNetwork(nn.Module):
@@ -19,16 +21,18 @@ class HierarchicalGraphNetwork(nn.Module):
         self.max_query_length = self.config.max_query_length
         
         self.query_projection = nn.Linear(config.hidden_size, config.intermediate_size) 
+
+        self.projection = nn.Linear(config.hidden_size, config.intermediate_size)
         
-        self.bi_attention = BiAttention(input_dim=config.hidden_size,
-                                        memory_dim=config.hidden_size,
-                                        hid_dim=config.intermediate_size,
-                                        dropout=config.bi_attn_drop)
-        self.bi_attn_linear = nn.Linear(config.intermediate_size * 4, config.intermediate_size)
-        self.sent_lstm = LSTMWrapper(input_dim=config.intermediate_size,
-                                     hidden_dim=config.intermediate_size,
-                                     n_layer=1,
-                                     dropout=config.lstm_drop)
+        # self.bi_attention = BiAttention(input_dim=config.hidden_size,
+        #                                 memory_dim=config.hidden_size,
+        #                                 hid_dim=config.intermediate_size,
+        #                                 dropout=config.bi_attn_drop)
+        # self.bi_attn_linear = nn.Linear(config.intermediate_size * 4, config.intermediate_size)
+        # self.sent_lstm = LSTMWrapper(input_dim=config.intermediate_size,
+        #                              hidden_dim=config.intermediate_size,
+        #                              n_layer=1,
+        #                              dropout=config.lstm_drop)
 
         self.graph_blocks = nn.ModuleList()
         for _ in range(self.config.num_gnn_layers):
@@ -43,19 +47,31 @@ class HierarchicalGraphNetwork(nn.Module):
         # bert encoding query vec
         query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
         query_vec = self.query_projection(query_vec)
-        attn_output, trunc_query_state = self.bi_attention(context_encoding,
-                                                           trunc_query_state,
-                                                           trunc_query_mapping)
+        # start = time.time()
+        # attn_output, trunc_query_state = self.bi_attention(context_encoding,
+        #                                                    trunc_query_state,
+        #                                                    trunc_query_mapping)
+        # end = time.time()
+        # logger.info("bi_attention time: {}".format(end - start))
 
-        input_state = self.bi_attn_linear(attn_output) # N x L x d
-        input_state = self.sent_lstm(input_state, batch['context_lens'])
+        # start = time.time()
+        # input_state = self.bi_attn_linear(attn_output) # N x L x d
+        # end = time.time()
+        # logger.info('bi_attn_linear time: %.4f' % (end - start))
+
+        # input_state = self.sent_lstm(input_state, batch['context_lens'])
         
-        if self.config.q_update:
-            query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
+        input_state = self.projection(context_encoding) # borrar
 
+        # if self.config.q_update:
+        #     query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
+
+        
         for l in range(self.config.num_gnn_layers):
+            # start = time.time()
             graph_output = self.graph_blocks[l](batch, input_state, query_vec)
-        
+            # end = time.time()
+            # logger.info(f"graph_block {l} time: {end - start}")
         return graph_output
 
 def mean_pooling(input, mask):
@@ -160,7 +176,7 @@ class GraphBlock(nn.Module):
         self.config = config
         self.hidden_dim = config.intermediate_size
         if self.config.q_update:
-            self.gat_linear = nn.Linear(self.hidden_dim*2, self.hidden_dim)
+            self.gat_linear = nn.Linear(self.hidden_dim, self.hidden_dim)
         else:
             self.gat_linear = nn.Linear(self.hidden_dim, self.hidden_dim*2)
 
@@ -191,6 +207,8 @@ class GraphBlock(nn.Module):
             mean_pooled = mapping_state.sum(dim=1) / mapping_sum.unsqueeze(-1)
 
             return mean_pooled
+
+        # start = time.time()
         para_start_output = torch.bmm(para_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_para x d
         para_end_output = torch.bmm(para_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_para x d
         para_state = torch.cat([para_start_output, para_end_output], dim=-1)  # N x max_para x 2d
@@ -202,13 +220,16 @@ class GraphBlock(nn.Module):
         ent_start_output = torch.bmm(ent_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_ent x d
         ent_end_output = torch.bmm(ent_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_ent x d
         ent_state = torch.cat([ent_start_output, ent_end_output], dim=-1)  # N x max_ent x 2d
+        # end = time.time()
+        # logger.info(f"Time for bmm: {end-start}")
 
         N, max_para_num, _ = para_state.size()
         _, max_sent_num, _ = sent_state.size()
         _, max_ent_num, _ = ent_state.size()
 
         if self.config.q_update:
-            graph_state = self.gat_linear(torch.cat([para_state, sent_state, ent_state], dim=1)) # N * (max_para + max_sent + max_ent) * d
+            graph_state = torch.cat([para_state, sent_state, ent_state], dim=1)
+            # graph_state = self.gat_linear(torch.cat([para_state, sent_state, ent_state], dim=1)) # N * (max_para + max_sent + max_ent) * d
             graph_state = torch.cat([query_vec.unsqueeze(1), graph_state], dim=1)
         else:
             graph_state = self.gat_linear(query_vec)
@@ -278,7 +299,10 @@ class AttentionLayer(nn.Module):
     def forward(self, input, adj, node_mask=None, query_vec=None):
         hidden_list = []
         for attn in self.attn_funcs:
+            # start = time.time()
             h = attn(input, adj, node_mask=node_mask, query_vec=query_vec)
+            # end = time.time()
+            # logger.info(f"gat attn time: {end - start}")
             hidden_list.append(h)
 
         h = torch.cat(hidden_list, dim=-1)
@@ -310,7 +334,7 @@ class GATSelfAttention(nn.Module):
             self.a_type.append(get_weights((out_dim * 2, 1)))
 
             if self.q_attn:
-                q_dim = self.config.hidden_size if self.config.q_update else self.config.intermediate_size
+                q_dim = self.config.intermediate_size
                 self.qattn_W1.append(get_weights((q_dim, out_dim * 2)))
                 self.qattn_W2.append(get_weights((out_dim * 2, out_dim * 2)))
 

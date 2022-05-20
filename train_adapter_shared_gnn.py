@@ -113,7 +113,7 @@ else:
     best_joint_f1 = 0
     learning_rate = args.learning_rate
 
-model = AdapterGraphQA('roberta-base', args)
+model = AdapterGraphQA('roberta-large', args)
 model.to(args.device)
 
 params_name, params = get_training_params(model, print_stats=True)
