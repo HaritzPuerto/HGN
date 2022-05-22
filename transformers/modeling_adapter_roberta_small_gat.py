@@ -708,7 +708,9 @@ class AdapterGraphQA_small_gat(torch.nn.Module):
     def __init__(self, pretrained_weights, args):
         super().__init__()     
         # Transformer Encoder
-        self.encoder = RobertaModel.from_pretrained(pretrained_weights)
+        num_gnn_heads = int(args.gnn[-1])
+
+        self.encoder = RobertaModel.from_pretrained(pretrained_weights, adapter_size=args.adapter_size, num_gnn_heads=num_gnn_heads)
         # hgn is shared across the layers of the transformer encoder
         self.hidden_size = self.encoder.config.hidden_size
         self.sent_mlp = OutputLayer(self.hidden_size, self.encoder.config, num_answer=1)

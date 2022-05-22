@@ -191,4 +191,7 @@ def default_train_parser():
     parser.add_argument("--ent_lambda", type=float, default=1)
     parser.add_argument("--sp_threshold", type=float, default=0.5)
 
+    # new
+    parser.add_argument("--adapter_size", type=int, default=32)
+
     return parser
