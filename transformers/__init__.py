@@ -161,6 +161,9 @@ if is_torch_available():
     from .modeling_adapter_roberta_small_gat import (
         AdapterGraphQA_small_gat,
     )
+    from .modeling_adapter_vanilla_roberta import (
+        RobertaModelAdapter,
+    )
     from .modeling_openai import (
         OpenAIGPTPreTrainedModel,
         OpenAIGPTModel,
