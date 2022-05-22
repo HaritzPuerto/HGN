@@ -28,10 +28,8 @@ from .configuration_bert import BertConfig
 from .file_utils import add_start_docstrings
 from .modeling_utils import PreTrainedModel, prune_linear_layer
 
-from .HGN import HierarchicalGraphNetwork
-from .HGN_layers import PredictionLayer
-
-
+import numpy as np
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 

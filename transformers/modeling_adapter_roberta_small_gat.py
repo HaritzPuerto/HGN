@@ -768,7 +768,6 @@ class AdapterGraphQA_small_gat(torch.nn.Module):
             sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
             sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()   
 
-        
             predictions = self.predict_layer(batch, transformer_output[0], sent_logit, packing_mask=batch['query_mapping'], return_yp=return_yp)
 
             if return_yp:

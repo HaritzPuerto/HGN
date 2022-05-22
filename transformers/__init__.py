@@ -155,7 +155,7 @@ if is_torch_available():
         load_tf_weights_in_bert,
         BERT_PRETRAINED_MODEL_ARCHIVE_MAP,
     )
-    from .modeling_adapter_roberta import (
+    from .modeling_adapter_roberta_shared_gnn import (
         AdapterGraphQA,
     )
     from .modeling_adapter_roberta_small_gat import (
