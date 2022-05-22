@@ -2,6 +2,9 @@ import argparse
 import numpy as np
 import logging
 import sys
+import os
+import shutil
+import json
 
 from os.path import join
 from tqdm import tqdm, trange
@@ -9,10 +12,15 @@ from tensorboardX import SummaryWriter
 
 from csr_mhqa.argument_parser import default_train_parser, complete_default_train_parser, json_to_argv
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
-from csr_mhqa.utils import *
+from csr_mhqa.utils import load_encoder_model, get_optimizer, convert_to_tokens, hotpot_eval, compute_loss, MODEL_CLASSES, IGNORE_INDEX
 
 from transformers import AdapterGraphQA_small_gat
 from transformers import get_linear_schedule_with_warmup
+from transformers import AdamW
+
+import torch
+import torch.nn.functional as F
+
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -92,6 +100,81 @@ train_dataloader = helper.train_loader
 dev_example_dict = helper.dev_example_dict
 dev_feature_dict = helper.dev_feature_dict
 dev_dataloader = helper.dev_loader
+
+def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file):
+    model.eval()
+
+    answer_dict = {}
+    answer_type_dict = {}
+    answer_type_prob_dict = {}
+
+    dataloader.refresh()
+
+    thresholds = np.arange(0.1, 1.0, 0.05)
+    N_thresh = len(thresholds)
+    total_sp_dict = [{} for _ in range(N_thresh)]
+
+    for batch in tqdm(dataloader):
+        with torch.no_grad():
+            batch['context_mask'] = batch['context_mask'].float().to(args.device)
+            start, end, q_type, paras, sents, ents, yp1, yp2 = model(batch, input_ids=batch['context_idxs'], attention_mask=batch['context_mask'])
+
+
+        type_prob = F.softmax(q_type, dim=1).data.cpu().numpy()
+        answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
+                                                                                    yp1.data.cpu().numpy().tolist(),
+                                                                                    yp2.data.cpu().numpy().tolist(),
+                                                                                    type_prob)
+
+        answer_type_dict.update(answer_type_dict_)
+        answer_type_prob_dict.update(answer_type_prob_dict_)
+        answer_dict.update(answer_dict_)
+
+        predict_support_np = torch.sigmoid(sents[:, :, 1]).data.cpu().numpy()
+
+        for i in range(predict_support_np.shape[0]):
+            cur_sp_pred = [[] for _ in range(N_thresh)]
+            cur_id = batch['ids'][i]
+
+            for j in range(predict_support_np.shape[1]):
+                if j >= len(example_dict[cur_id].sent_names):
+                    break
+
+                for thresh_i in range(N_thresh):
+                    if predict_support_np[i, j] > thresholds[thresh_i]:
+                        cur_sp_pred[thresh_i].append(example_dict[cur_id].sent_names[j])
+
+            for thresh_i in range(N_thresh):
+                if cur_id not in total_sp_dict[thresh_i]:
+                    total_sp_dict[thresh_i][cur_id] = []
+
+                total_sp_dict[thresh_i][cur_id].extend(cur_sp_pred[thresh_i])
+
+    def choose_best_threshold(ans_dict, pred_file):
+        best_joint_f1 = 0
+        best_metrics = None
+        best_threshold = 0
+        for thresh_i in range(N_thresh):
+            prediction = {'answer': ans_dict,
+                          'sp': total_sp_dict[thresh_i],
+                          'type': answer_type_dict,
+                          'type_prob': answer_type_prob_dict}
+            tmp_file = os.path.join(os.path.dirname(pred_file), 'tmp.json')
+            with open(tmp_file, 'w') as f:
+                json.dump(prediction, f)
+            metrics = hotpot_eval(tmp_file, dev_gold_file)
+            if metrics['joint_f1'] >= best_joint_f1:
+                best_joint_f1 = metrics['joint_f1']
+                best_threshold = thresholds[thresh_i]
+                best_metrics = metrics
+                shutil.move(tmp_file, pred_file)
+
+        return best_metrics, best_threshold
+
+    best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
+    json.dump(best_metrics, open(eval_file, 'w'))
+
+    return best_metrics, best_threshold
 
 #########################################################################
 # Initialize Model
@@ -204,12 +287,15 @@ for epoch in train_iterator:
             epoch_iterator.close()
             break
     
+    torch.save({k: v.cpu() for k, v in model.state_dict().items()},
+                join(args.exp_name, f'model_{epoch+1}.pkl'))
     output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
     output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
     metrics, threshold = eval_model(args, model,
                                     dev_dataloader, dev_example_dict, dev_feature_dict,
                                     output_pred_file, output_eval_file, args.dev_gold_file)
 
+    
     if metrics['joint_f1'] >= best_joint_f1:
         best_joint_f1 = metrics['joint_f1']
         torch.save({'epoch': epoch+1,
@@ -220,8 +306,6 @@ for epoch in train_iterator:
                     'threshold': threshold},
                     join(args.exp_name, f'cached_config.bin')
         )
-        logger.info(f'Saving model at epoch {epoch+1} with best joint f1 {best_joint_f1}')
-    torch.save({k: v.cpu() for k, v in model.state_dict().items()},
-                join(args.exp_name, f'model_{epoch+1}.pkl'))
-
+        # logger.info(f'Saving model at epoch {epoch+1} with best joint f1 {best_joint_f1}')
+    
 
