@@ -461,7 +461,6 @@ class BertLayer(nn.Module):
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        batch=None,
     ):
         self_attention_outputs = self.attention(hidden_states, attention_mask, head_mask)
         attention_output = self_attention_outputs[0]
@@ -502,7 +501,6 @@ class BertEncoder(nn.Module):
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        batch=None,
     ):
         all_hidden_states = ()
         all_attentions = ()
@@ -511,7 +509,7 @@ class BertEncoder(nn.Module):
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             layer_outputs = layer_module(
-                hidden_states, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask, batch=batch
+                hidden_states, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask
             )
             hidden_states = layer_outputs[0]
 
@@ -770,7 +768,6 @@ class BertModel(BertPreTrainedModel):
 
     def forward(
         self,
-        batch=None,
         input_ids=None,
         attention_mask=None,
         token_type_ids=None,
@@ -898,7 +895,6 @@ class BertModel(BertPreTrainedModel):
             head_mask=head_mask,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_extended_attention_mask,
-            batch=batch,
         )
         sequence_output = encoder_outputs[0]
         #pooled_output = self.pooler(sequence_output)

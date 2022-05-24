@@ -164,6 +164,12 @@ if is_torch_available():
     from .modeling_adapter_vanilla_roberta import (
         RobertaModelAdapter,
     )
+    from .modeling_adapter_vanilla_hgn import (
+        VanillaAdapter_HGN,
+    )
+    from .modeling_adapter_vanilla_hgn_v2 import (
+        VanillaAdapter_HGN_v2,
+    )
     from .modeling_openai import (
         OpenAIGPTPreTrainedModel,
         OpenAIGPTModel,
