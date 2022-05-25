@@ -391,6 +391,28 @@ class TextAdapter(nn.Module):
         layer_output = hidden_states + self.dropout(y)
         return layer_output
 
+
+class StructAdapt(nn.Module):
+    def __init__(self, config, hgn_config):
+        super().__init__()
+        self.DenseReluDense = nn.Sequential(nn.Linear(config.hidden_size, config.intermediate_size, bias=False),
+                                            nn.ReLU(),
+                                            nn.Dropout(config.hidden_dropout_prob),
+                                            nn.Linear(config.intermediate_size, config.hidden_size, bias=False))
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.hgn = HierarchicalGraphNetwork(hgn_config)
+
+    def forward(self, hidden_states, batch):
+        norm_x = self.layer_norm(hidden_states)
+        y = self.DenseReluDense(norm_x)
+        layer_output = hidden_states + self.dropout(y)
+
+        layer_output, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, layer_output)
+        layer_output = layer_output + norm_x # residual connection
+        return layer_output, para_predictions, sent_predictions, ent_predictions
+        
+
 class GatedAttention(nn.Module):
     def __init__(self, input_dim, memory_dim, hid_dim, dropout, gate_method='gate_att_up'):
         super(GatedAttention, self).__init__()
@@ -453,9 +475,7 @@ class BertLayer(nn.Module):
         config_adapters.intermediate_size = config.adapter_size
 
         self.adapter_text_bottom = TextAdapter(config_adapters)
-        self.adapter_text_top = TextAdapter(config_adapters)
-
-        self.hgn = HierarchicalGraphNetwork(hgn_config)
+        self.adapter_graph_top = StructAdapt(config_adapters, hgn_config)
 
     def forward(
         self,
@@ -484,10 +504,9 @@ class BertLayer(nn.Module):
         layer_output_text = self.output(intermediate_output_text, attention_output_text)
         
         #### Top Adapter
-        layer_output = self.adapter_text_top(layer_output_text)
+        layer_output, para_predictions, sent_predictions, ent_predictions = self.adapter_graph_top(layer_output_text, batch)
 
-        layer_output, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, layer_output)
-
+        outputs = (layer_output,) + outputs
         
         return (outputs, (para_predictions, sent_predictions, ent_predictions))
 
