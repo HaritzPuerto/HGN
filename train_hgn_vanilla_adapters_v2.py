@@ -52,13 +52,14 @@ def get_training_params(graphqa, print_stats=False):
             num_params_hgn -= p.numel()
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
-        print(f"Number of training parameters: {num_training_params/1e6:.2f}M")
-        print(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
-        print(f"Number of total parameters: {num_total_params/1e6:.2f}M")
-        print(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
-        print(f"-----------------------")
-        print(f"Number of training parameters in original HGN: {num_params_hgn/1e6:.2f}M")
-        
+        logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
+        logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
+        logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
+        logger.info(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
+        logger.info(f"-----------------------")
+        logger.info(f"Number of training parameters in original HGN: {num_params_hgn/1e6:.2f}M")
+        logger.info("Ratio learned parameters: %.4f", num_training_params / num_fronzen_params)
+
     return params_name, params
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
@@ -71,7 +72,7 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     :return:
     """
     num_training_params = 0
-    params_name, params = get_training_params(model, print_stats=False)
+    params_name, params = get_training_params(model, print_stats=True)
 
     for p in params:
         num_training_params += p.numel()
