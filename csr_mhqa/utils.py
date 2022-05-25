@@ -55,6 +55,9 @@ def get_optimizer(encoder, model, args, learning_rate, remove_pooler=False):
 
     param_optimizer = list(encoder.named_parameters())
     param_optimizer += list(model.named_parameters())
+    # print num parameters
+    num_params = count_parameters(encoder) + count_parameters(model)
+    logger.info(f"Total number of parameters: {num_params/1e6:.2f}")
 
     if remove_pooler:
         param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
