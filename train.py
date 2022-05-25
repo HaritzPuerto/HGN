@@ -145,6 +145,9 @@ if args.local_rank in [-1, 0]:
 encoder.zero_grad()
 model.zero_grad()
 
+list_few_shot_eval = np.array([100, 500, 1000, 2000, 3000])/args.batch_size
+logger.info(f"Few-shot evaluation at {list_few_shot_eval}")
+
 train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
 for epoch in train_iterator:
     epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
@@ -209,6 +212,16 @@ for epoch in train_iterator:
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
+
+        if step+1 in list_few_shot_eval:
+            logger.info(f"Evaluating on dev set at step {global_step}")
+            output_pred_file = os.path.join(args.exp_name, f'pred.global_step_{global_step}.json')
+            output_eval_file = os.path.join(args.exp_name, f'eval.global_step_{global_step}.json')
+            metrics, threshold = eval_model(args, encoder, model,
+                                        dev_dataloader, dev_example_dict, dev_feature_dict,
+                                        output_pred_file, output_eval_file, args.dev_gold_file)
+            model.train()
+
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
         output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
