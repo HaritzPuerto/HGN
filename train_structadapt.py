@@ -31,7 +31,7 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter', 'hgn', 'predict_layer']
+    training_params = ['adapter', 'predict_layer']
 
     for n, p in graphqa.named_parameters():
         trained = False
@@ -54,13 +54,14 @@ def get_training_params(graphqa, print_stats=False):
             num_params_hgn -= p.numel()
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
-        print(f"Number of training parameters: {num_training_params/1e6:.2f}M")
-        print(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
-        print(f"Number of total parameters: {num_total_params/1e6:.2f}M")
-        print(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
-        print(f"-----------------------")
-        print(f"Number of training parameters in original HGN: {num_params_hgn/1e6:.2f}M")
-        
+        logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
+        logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
+        logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
+        logger.info(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
+        logger.info(f"-----------------------")
+        logger.info(f"Number of training parameters in original HGN: {num_params_hgn/1e6:.2f}M")
+        logger.info("Ratio learned parameters: %.4f", num_training_params / num_fronzen_params)
+
     return params_name, params
 
 def get_optimizer_all_params(model, args, learning_rate, remove_pooler=False):
@@ -96,7 +97,7 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     :return:
     """
     num_training_params = 0
-    params_name, params = get_training_params(model, print_stats=False)
+    params_name, params = get_training_params(model, print_stats=True)
 
     for p in params:
         num_training_params += p.numel()
@@ -289,7 +290,7 @@ if args.max_steps > 0:
 else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
-optimizer = get_optimizer_all_params(model, args, learning_rate, remove_pooler=False)
+optimizer = get_optimizer(model, args, learning_rate, remove_pooler=False)
 
 scheduler = get_linear_schedule_with_warmup(optimizer,
                                             num_warmup_steps=args.warmup_steps,
