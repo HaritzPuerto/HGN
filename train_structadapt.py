@@ -151,7 +151,7 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
     for batch in tqdm(dataloader):
         with torch.no_grad():
             batch['context_mask'] = batch['context_mask'].float().to(args.device)
-            start_prediction, end_prediction, type_prediction, para, sent, ent, yp1, yp2 = model(batch, return_yp=True)
+            start_prediction, end_prediction, type_prediction, para, sent, ent, yp1, yp2 = model(batch=batch, return_yp=True)
         type_prob = F.softmax(type_prediction, dim=1).data.cpu().numpy()
         answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
                                                                                     yp1.data.cpu().numpy().tolist(),
