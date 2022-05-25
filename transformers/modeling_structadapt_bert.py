@@ -395,21 +395,21 @@ class TextAdapter(nn.Module):
 class StructAdapt(nn.Module):
     def __init__(self, config, hgn_config):
         super().__init__()
-        self.DenseReluDense = nn.Sequential(nn.Linear(config.hidden_size, config.intermediate_size, bias=False),
-                                            nn.ReLU(),
-                                            nn.Dropout(config.hidden_dropout_prob),
-                                            nn.Linear(config.intermediate_size, config.hidden_size, bias=False))
+        
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.hgn = HierarchicalGraphNetwork(hgn_config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.wo = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+
 
     def forward(self, hidden_states, batch):
         norm_x = self.layer_norm(hidden_states)
-        y = self.DenseReluDense(norm_x)
-        layer_output = hidden_states + self.dropout(y)
 
-        layer_output, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, layer_output)
-        layer_output = layer_output + norm_x # residual connection
+        layer_output, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, norm_x)
+        layer_output = self.dropout(layer_output)
+        layer_output = self.wo(layer_output)
+
+        layer_output = layer_output + hidden_states # residual connection
         return layer_output, para_predictions, sent_predictions, ent_predictions
         
 
