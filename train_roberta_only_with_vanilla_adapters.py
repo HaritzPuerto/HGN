@@ -31,8 +31,8 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter']
-
+    training_params = ['adapter', 'pred_layer']
+    dict_params = {p: 0 for p in training_params}
     for n, p in graphqa.named_parameters():
         trained = False
         for trained_param in training_params:
@@ -41,24 +41,21 @@ def get_training_params(graphqa, print_stats=False):
                 trained = True
                 params.append(p)
                 params_name.append(n)
+                dict_params[trained_param] += p.numel()
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-        if 'encoder' in n:
-            num_params_hgn += p.numel()
-        if 'hgn' in n:
-            num_params_hgn += p.numel()
-        if 'predict_layer' in n:
-            num_params_hgn += p.numel()
-        if 'adapter' in n:
-            num_params_hgn -= p.numel()
+
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
-        logger.info(f"Number of training parameters in encoder: {num_training_params/1e6:.2f}M")
-        logger.info(f"Number of frozen parameters in encoder: {num_fronzen_params/1e6:.2f}M")
-        logger.info(f"Number of total parameters in encoder: {num_total_params/1e6:.2f}M")
-        logger.info(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
-       
+        print(f"Number of training parameters: {num_training_params/1e6:.2f}M")
+        print(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
+        print(f"Number of total parameters: {num_total_params/1e6:.2f}M")
+        print(f"-----------------------")
+        for k, v in dict_params.items():
+            print(f"Number of {k} parameters: {v/1e6:.2f}M")
+        print(f"-----------------------")
+        print(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
 
     return params_name, params
 
