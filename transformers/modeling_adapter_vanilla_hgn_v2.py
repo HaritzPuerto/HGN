@@ -188,7 +188,7 @@ class VanillaAdapter_HGN_v2(nn.Module):
     def __init__(self, config):
         super(VanillaAdapter_HGN_v2, self).__init__()     
         # Transformer Encoder
-        self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path)
+        self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
         self.hgn = HierarchicalGraphNetwork(config)
 
     def forward(
