@@ -48,14 +48,14 @@ def get_training_params(graphqa, print_stats=False):
 
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
-        print(f"Number of training parameters: {num_training_params/1e6:.2f}M")
-        print(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
-        print(f"Number of total parameters: {num_total_params/1e6:.2f}M")
-        print(f"-----------------------")
+        logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
+        logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
+        logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
+        logger.info(f"-----------------------")
         for k, v in dict_params.items():
-            print(f"Number of {k} parameters: {v/1e6:.2f}M")
-        print(f"-----------------------")
-        print(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
+            logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
+        logger.info(f"-----------------------")
+        logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
 
     return params_name, params
 
