@@ -188,7 +188,7 @@ class MultiModalAdapterRoberta(nn.Module):
     def __init__(self, config):
         super(MultiModalAdapterRoberta, self).__init__()     
         # Transformer Encoder
-        self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path)
+        self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
         self.hgn = HierarchicalGraphNetwork(config)
         self.adapter_fusing_layer = GatedAttention(input_dim=config.input_dim,
                                             memory_dim=config.input_dim,
