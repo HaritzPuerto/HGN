@@ -321,7 +321,6 @@ for epoch in train_iterator:
             torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
         else:
             loss_list[0].backward()
-            torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.max_grad_norm)
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
         for idx in range(len(loss_name)):
