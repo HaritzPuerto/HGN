@@ -223,7 +223,7 @@ class RobertaModelAdapter4HotpotQA(nn.Module):
                 input_ids=batch['context_idxs'],
                 attention_mask=batch['context_mask']
             )[0]
-            context_encoding = self.projection(context_encoding)
+            context_encoding = self.pred_layer_projection(context_encoding)
             return self.pred_layer(batch, context_encoding, return_yp=True)
 
 

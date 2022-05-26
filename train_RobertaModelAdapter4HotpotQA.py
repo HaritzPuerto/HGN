@@ -265,7 +265,7 @@ if args.fp16:
         from apex import amp
     except ImportError:
         raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-    models, optimizer = amp.initialize([encoder, model], optimizer, opt_level=args.fp16_opt_level)
+    models, optimizer = amp.initialize([model], optimizer, opt_level=args.fp16_opt_level)
     assert len(models) == 2
     encoder, model = models
 
