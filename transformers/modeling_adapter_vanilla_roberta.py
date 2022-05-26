@@ -187,51 +187,102 @@ class RobertaModelAdapter(BertModel):
         self.embeddings.word_embeddings = value
 
 
-# @add_start_docstrings(
-#     "The bare RoBERTa Model transformer outputting raw hidden-states without any specific head on top.",
-#     ROBERTA_START_DOCSTRING,
-# )
-# class RobertaModel(BertModel):
-#     r"""
-#     Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
-#         **last_hidden_state**: ``torch.FloatTensor`` of shape ``(batch_size, sequence_length, hidden_size)``
-#             Sequence of hidden-states at the output of the last layer of the model.
-#         **pooler_output**: ``torch.FloatTensor`` of shape ``(batch_size, hidden_size)``
-#             Last layer hidden-state of the first token of the sequence (classification token)
-#             further processed by a Linear layer and a Tanh activation function. The Linear
-#             layer weights are trained from the next sentence prediction (classification)
-#             objective during Bert pretraining. This output is usually *not* a good summary
-#             of the semantic content of the input, you're often better with averaging or pooling
-#             the sequence of hidden-states for the whole input sequence.
-#         **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
-#             list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
-#             of shape ``(batch_size, sequence_length, hidden_size)``:
-#             Hidden-states of the model at the output of each layer plus the initial embedding outputs.
-#         **attentions**: (`optional`, returned when ``config.output_attentions=True``)
-#             list of ``torch.FloatTensor`` (one for each layer) of shape ``(batch_size, num_heads, sequence_length, sequence_length)``:
-#             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+class RobertaModelAdapter4HotpotQA(nn.Module):
+    def __init__(self, config):
+        super(RobertaModelAdapter4HotpotQA, self).__init__()     
+        # Transformer Encoder
+        self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
+        self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
+        self.pred_layer = PredictionLayer(config)
 
-#     Examples::
+    def forward(
+            self,
+            batch=None,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            return_yp=True,
+        ):
+            r"""
+            start_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+                Labels for position (index) of the start of the labelled span for computing the token classification loss.
+                Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+                are not taken into account for computing the loss.
+            end_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+                Labels for position (index) of the end of the labelled span for computing the token classification loss.
+                Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+                are not taken into account for computing the loss.
+            """
 
-#         tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
-#         model = RobertaModel.from_pretrained('roberta-base')
-#         input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute", add_special_tokens=True)).unsqueeze(0)  # Batch size 1
-#         outputs = model(input_ids)
-#         last_hidden_states = outputs[0]  # The last hidden-state is the first element of the output tuple
+            
+            # 1) get transformer token embeddings
+            context_encoding = self.encoder(
+                input_ids=batch['context_idxs'],
+                attention_mask=batch['context_mask']
+            )[0]
+            context_encoding = self.projection(context_encoding)
+            return self.pred_layer(batch, context_encoding, return_yp=True)
 
-#     """
-#     config_class = RobertaConfig
-#     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
-#     base_model_prefix = "roberta"
 
-#     def __init__(self, config):
-#         super(RobertaModel, self).__init__(config)
+class PredictionLayer(nn.Module):
+    """
+    Identical to baseline prediction layer
+    """
+    def __init__(self, config):
+        super(PredictionLayer, self).__init__()
+        self.config = config
+        self.input_dim = config.ctx_attn_hidden_dim
+        h_dim = config.hidden_dim
 
-#         self.embeddings = RobertaEmbeddings(config)
-#         self.init_weights()
+        self.hidden = h_dim
 
-#     def get_input_embeddings(self):
-#         return self.embeddings.word_embeddings
+        self.start_linear = OutputLayer(self.input_dim, config, num_answer=1)
+        self.end_linear = OutputLayer(self.input_dim, config, num_answer=1)
+        self.type_linear = OutputLayer(self.input_dim, config, num_answer=4)
+        self.sent_mlp = OutputLayer(self.input_dim*2, config, num_answer=2)
 
-#     def set_input_embeddings(self, value):
-#         self.embeddings.word_embeddings = value
+        self.cache_S = 0
+        self.cache_mask = None
+
+    def get_output_mask(self, outer):
+        S = outer.size(1)
+        if S <= self.cache_S:
+            return Variable(self.cache_mask[:S, :S], requires_grad=False)
+        self.cache_S = S
+        np_mask = np.tril(np.triu(np.ones((S, S)), 0), 15)
+        self.cache_mask = outer.data.new(S, S).copy_(torch.from_numpy(np_mask))
+        return Variable(self.cache_mask, requires_grad=False)
+
+    def forward(self, batch, context_input, packing_mask=None, return_yp=False):
+        context_mask = batch['context_mask']
+        
+        # sent pred
+        sent_mapping = batch['sent_mapping']
+        sent_start_mapping = batch['sent_start_mapping']
+        sent_end_mapping = batch['sent_end_mapping']
+        sent_start_output = torch.bmm(sent_start_mapping, context_input)   # N x max_sent x d
+        sent_end_output = torch.bmm(sent_end_mapping, context_input)       # N x max_sent x d
+        sent_state = torch.cat([sent_start_output, sent_end_output], dim=-1)  # N x max_sent x 2d       
+        sent_logit = self.sent_mlp(sent_state) # N x max_sent x 1
+
+        # span pred
+        start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
+        end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
+        type_prediction = self.type_linear(context_input[:, 0, :])
+
+        if not return_yp:
+            return start_prediction, end_prediction, type_prediction, sent_logit
+
+        outer = start_prediction[:, :, None] + end_prediction[:, None]
+        outer_mask = self.get_output_mask(outer)
+        outer = outer - 1e30 * (1 - outer_mask[None].expand_as(outer))
+        if packing_mask is not None:
+            outer = outer - 1e30 * packing_mask[:, :, None]
+        # yp1: start
+        # yp2: end
+        yp1 = outer.max(dim=2)[0].max(dim=1)[1]
+        yp2 = outer.max(dim=1)[0].max(dim=1)[1]
+        return start_prediction, end_prediction, type_prediction, sent_logit, yp1, yp2

@@ -162,7 +162,7 @@ if is_torch_available():
         AdapterGraphQA_small_gat,
     )
     from .modeling_adapter_vanilla_roberta import (
-        RobertaModelAdapter,
+        RobertaModelAdapter, RobertaModelAdapter4HotpotQA
     )
     from .modeling_adapter_vanilla_hgn import (
         VanillaAdapter_HGN,
@@ -170,9 +170,9 @@ if is_torch_available():
     from .modeling_adapter_vanilla_hgn_v2 import (
         VanillaAdapter_HGN_v2,
     )
-    from .modeling_adapter_shared_gnn_v2_roberta import (
-        VanillaAdapter_Shared_HGN_v2,
-    )
+    # from .modeling_adapter_shared_gnn_v2_roberta import (
+    #     VanillaAdapter_Shared_HGN_v2,
+    # )
     from .modeling_structadapt_roberta import (
         StructAdaptRoberta,
     )

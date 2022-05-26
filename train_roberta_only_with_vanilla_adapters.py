@@ -14,7 +14,7 @@ from csr_mhqa.argument_parser import default_train_parser, complete_default_trai
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
 from csr_mhqa.utils import load_encoder_model, convert_to_tokens, hotpot_eval, MODEL_CLASSES, IGNORE_INDEX
 from models.PredictionLayerOnly import *
-from transformers import get_linear_schedule_with_warmup, RobertaModelAdapter, AdamW
+from transformers import get_linear_schedule_with_warmup, RobertaModelAdapter4HotpotQA, AdamW
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -62,7 +62,7 @@ def get_training_params(graphqa, print_stats=False):
 
     return params_name, params
 
-def get_optimizer(encoder, model, args, learning_rate, remove_pooler=False):
+def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
     get BertAdam for encoder / classifier or BertModel
     :param model:
@@ -72,13 +72,8 @@ def get_optimizer(encoder, model, args, learning_rate, remove_pooler=False):
     :return:
     """
     num_training_params = 0
-    params_name, params = get_training_params(encoder, print_stats=True)
-    for n, p in model.named_parameters():
-        params_name.append(n)
-        params.append(p)
-    for p in params:
-        num_training_params += p.numel()
-    logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
+    params_name, params = get_training_params(model, print_stats=True)
+
     logger.info(f"Name of the training parameters: {params_name}")
 
     no_decay = ["bias", "LayerNorm.weight"]
@@ -125,14 +120,8 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
 
     for batch in tqdm(dataloader):
         with torch.no_grad():
-            inputs = {'input_ids':      batch['context_idxs'],
-                      'attention_mask': batch['context_mask'],
-                      'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
-            outputs = encoder(**inputs)
-
-            batch['context_encoding'] = outputs[0]
-            batch['context_mask'] = batch['context_mask'].float().to(args.device)
-            start_prediction, end_prediction, type_prediction, sent, yp1, yp2 = model(batch, batch['context_encoding'], return_yp=True)
+            batch['context_mask'] = batch['context_mask'].float().to(args.device)            
+            start_prediction, end_prediction, type_prediction, sent, yp1, yp2 = model(batch, return_yp=True)
 
         type_prob = F.softmax(type_prediction, dim=1).data.cpu().numpy()
         answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
@@ -243,10 +232,8 @@ else:
     learning_rate = args.learning_rate
 
 # Set Encoder and Model
-encoder = RobertaModelAdapter.from_pretrained(args.encoder_name_or_path, adapter_size=args.adapter_size,)
-model = PredictionLayer(config=args)
+model = RobertaModelAdapter4HotpotQA(args)
 
-encoder.to(args.device)
 model.to(args.device)
 
 _, _, tokenizer_class = MODEL_CLASSES[args.model_type]
@@ -259,7 +246,7 @@ tokenizer = tokenizer_class.from_pretrained(args.encoder_name_or_path,
 if encoder_path is not None and model_path is not None:
     output_pred_file = os.path.join(args.exp_name, 'prev_checkpoint.pred.json')
     output_eval_file = os.path.join(args.exp_name, 'prev_checkpoint.eval.txt')
-    prev_metrics, prev_threshold = eval_model(args, encoder, model,
+    prev_metrics, prev_threshold = eval_model(args, model,
                                               dev_dataloader, dev_example_dict, dev_feature_dict,
                                               output_pred_file, output_eval_file, args.dev_gold_file)
     logger.info("Best threshold for prev checkpoint: {}".format(prev_threshold))
@@ -275,7 +262,7 @@ if args.max_steps > 0:
 else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
-optimizer = get_optimizer(encoder, model, args, learning_rate, remove_pooler=False)
+optimizer = get_optimizer(model, args, learning_rate, remove_pooler=False)
 if args.fp16:
     try:
         from apex import amp
@@ -308,7 +295,6 @@ tr_loss, logging_loss = [0] * len(loss_name), [0]* len(loss_name)
 if args.local_rank in [-1, 0]:
     tb_writer = SummaryWriter(args.exp_name)
 
-encoder.zero_grad()
 model.zero_grad()
 
 train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
@@ -318,18 +304,12 @@ for epoch in train_iterator:
     dev_dataloader.refresh()
 
     for step, batch in enumerate(epoch_iterator):
-        encoder.train()
         model.train()
 
-        inputs = {'input_ids':      batch['context_idxs'],
-                  'attention_mask': batch['context_mask'],
-                  'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
-
-        batch['context_encoding'] = encoder(**inputs)[0]
         batch['context_mask'] = batch['context_mask'].float().to(args.device)
-        start_prediction, end_prediction, type_prediction, sent_logit, yp1, yp2 = model(batch, batch['context_encoding'], return_yp=True)
-
-        loss_list = compute_loss(args, batch, start_prediction, end_prediction, type_prediction, sent_logit)
+        start, end, q_type, sents, _, _ = model(batch, return_yp=True)
+        
+        loss_list = compute_loss(args, batch, start, end, q_type, sents)
         del batch
 
         if args.n_gpu > 1:
