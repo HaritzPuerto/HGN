@@ -101,8 +101,7 @@ def compute_loss(args, batch, start, end, q_type, sent):
     return loss, loss_span, loss_type, loss_sup
 
 
-def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file):
-    encoder.eval()
+def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file):
     model.eval()
 
     answer_dict = {}
@@ -214,15 +213,12 @@ dev_dataloader = helper.dev_loader
 cached_config_file = join(args.exp_name, 'cached_config.bin')
 if os.path.exists(cached_config_file):
     cached_config = torch.load(cached_config_file)
-    encoder_path = join(args.exp_name, cached_config['encoder'])
     model_path = join(args.exp_name, cached_config['model'])
     learning_rate = cached_config['lr']
     start_epoch = cached_config['epoch']
     best_joint_f1 = cached_config['best_joint_f1']
-    logger.info("Loading encoder from: {}".format(encoder_path))
     logger.info("Loading model from: {}".format(model_path))
 else:
-    encoder_path = None
     model_path = None
     start_epoch = 0
     best_joint_f1 = 0
@@ -238,19 +234,6 @@ tokenizer = tokenizer_class.from_pretrained(args.encoder_name_or_path,
                                             do_lower_case=args.do_lower_case)
 
 #########################################################################
-# Evalaute if resumed from other checkpoint
-##########################################################################
-if encoder_path is not None and model_path is not None:
-    output_pred_file = os.path.join(args.exp_name, 'prev_checkpoint.pred.json')
-    output_eval_file = os.path.join(args.exp_name, 'prev_checkpoint.eval.txt')
-    prev_metrics, prev_threshold = eval_model(args, model,
-                                              dev_dataloader, dev_example_dict, dev_feature_dict,
-                                              output_pred_file, output_eval_file, args.dev_gold_file)
-    logger.info("Best threshold for prev checkpoint: {}".format(prev_threshold))
-    for key, val in prev_metrics.items():
-        logger.info("{} = {}".format(key, val))
-
-#########################################################################
 # Get Optimizer
 ##########################################################################
 if args.max_steps > 0:
@@ -260,25 +243,6 @@ else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
 optimizer = get_optimizer(model, args, learning_rate, remove_pooler=False)
-if args.fp16:
-    try:
-        from apex import amp
-    except ImportError:
-        raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-    models, optimizer = amp.initialize([model], optimizer, opt_level=args.fp16_opt_level)
-    assert len(models) == 2
-    encoder, model = models
-
-# Distributed training (should be after apex fp16 initialization)
-if args.local_rank != -1:
-    encoder = torch.nn.parallel.DistributedDataParallel(encoder, device_ids=[args.local_rank],
-                                                        output_device=args.local_rank,
-                                                        find_unused_parameters=True)
-
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                      output_device=args.local_rank,
-                                                      find_unused_parameters=True)
-
 scheduler = get_linear_schedule_with_warmup(optimizer,
                                             num_warmup_steps=args.warmup_steps,
                                             num_training_steps=t_total)
@@ -332,7 +296,6 @@ for epoch in train_iterator:
         if (step + 1) % args.gradient_accumulation_steps == 0:
             optimizer.step()
             scheduler.step()  # Update learning rate schedule
-            encoder.zero_grad()
             model.zero_grad()
             global_step += 1
 
@@ -352,21 +315,19 @@ for epoch in train_iterator:
             epoch_iterator.close()
             break
 
-    torch.save({k: v.cpu() for k, v in encoder.state_dict().items()},
-                    join(args.exp_name, f'encoder_{epoch+1}.pkl'))
+
     torch.save({k: v.cpu() for k, v in model.state_dict().items()},
                 join(args.exp_name, f'model_{epoch+1}.pkl'))
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
         output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
-        metrics, threshold = eval_model(args, encoder, model,
+        metrics, threshold = eval_model(args, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
         if metrics['joint_f1'] >= best_joint_f1:
             best_joint_f1 = metrics['joint_f1']
             torch.save({'epoch': epoch+1,
                         'lr': scheduler.get_lr()[0],
-                        'encoder': 'encoder.pkl',
                         'model': 'model.pkl',
                         'best_joint_f1': best_joint_f1,
                         'threshold': threshold},
@@ -374,10 +335,6 @@ for epoch in train_iterator:
             )
         with open(join(args.exp_name, f'metrics.txt'), 'w+') as f:
             json.dump(metrics, f)
-        # torch.save({k: v.cpu() for k, v in encoder.state_dict().items()},
-        #             join(args.exp_name, f'encoder_{epoch+1}.pkl'))
-        # torch.save({k: v.cpu() for k, v in model.state_dict().items()},
-        #             join(args.exp_name, f'model_{epoch+1}.pkl'))
 
         for key, val in metrics.items():
             tb_writer.add_scalar(key, val, epoch)
