@@ -32,6 +32,7 @@ def get_training_params(graphqa, print_stats=False):
     num_fronzen_params = 0
     num_params_hgn = 0
     training_params = ['adapter', 'predict_layer']
+    dict_params = {p: 0 for p in training_params}
 
     for n, p in graphqa.named_parameters():
         trained = False
@@ -41,51 +42,23 @@ def get_training_params(graphqa, print_stats=False):
                 trained = True
                 params.append(p)
                 params_name.append(n)
+                dict_params[trained_param] += p.numel()
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-        if 'encoder' in n:
-            num_params_hgn += p.numel()
-        if 'hgn' in n:
-            num_params_hgn += p.numel()
-        if 'predict_layer' in n:
-            num_params_hgn += p.numel()
-        if 'adapter' in n:
-            num_params_hgn -= p.numel()
+        
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
         logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
         logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
-        logger.info(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
         logger.info(f"-----------------------")
-        logger.info(f"Number of training parameters in original HGN: {num_params_hgn/1e6:.2f}M")
-        logger.info("Ratio learned parameters: %.4f", num_training_params / num_fronzen_params)
+        for k, v in dict_params.items():
+            logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
+        logger.info(f"-----------------------")
+        logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
 
     return params_name, params
-
-def get_optimizer_all_params(model, args, learning_rate, remove_pooler=False):
-    """
-    get BertAdam for encoder / classifier or BertModel
-    :param model:
-    :param classifier:
-    :param args:
-    :param remove_pooler:
-    :return:
-    """
-    param_optimizer = list(model.named_parameters())
-
-    if remove_pooler:
-        param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
-
-    no_decay = ['bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
-        {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=args.adam_epsilon)
-
-    return optimizer
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
@@ -98,6 +71,7 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
     num_training_params = 0
     params_name, params = get_training_params(model, print_stats=True)
+    logger.info(f"Name of the training parameters: {params_name}")
 
     for p in params:
         num_training_params += p.numel()
@@ -268,18 +242,6 @@ _, _, tokenizer_class = MODEL_CLASSES[args.model_type]
 tokenizer = tokenizer_class.from_pretrained(args.encoder_name_or_path,
                                             do_lower_case=args.do_lower_case)
 
-#########################################################################
-# Evalaute if resumed from other checkpoint
-##########################################################################
-if encoder_path is not None and model_path is not None:
-    output_pred_file = os.path.join(args.exp_name, 'prev_checkpoint.pred.json')
-    output_eval_file = os.path.join(args.exp_name, 'prev_checkpoint.eval.txt')
-    prev_metrics, prev_threshold = eval_model(args, model,
-                                              dev_dataloader, dev_example_dict, dev_feature_dict,
-                                              output_pred_file, output_eval_file, args.dev_gold_file)
-    logger.info("Best threshold for prev checkpoint: {}".format(prev_threshold))
-    for key, val in prev_metrics.items():
-        logger.info("{} = {}".format(key, val))
 
 #########################################################################
 # Get Optimizer
@@ -307,7 +269,6 @@ if args.local_rank in [-1, 0]:
 
 model.zero_grad()
 list_few_shot_eval = np.array([100, 500, 1000, 2000, 3000])/args.batch_size
-
 train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
 for epoch in train_iterator:
     epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
