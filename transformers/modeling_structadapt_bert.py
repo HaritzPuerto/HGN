@@ -946,12 +946,11 @@ class HierarchicalGraphNetwork(nn.Module):
         self.config = config
         self.max_query_length = self.config.max_query_length
 
-        # self.bi_attention = BiAttention(input_dim=config.input_dim,
-        #                                 memory_dim=config.input_dim,
-        #                                 hid_dim=config.hidden_dim,
-        #                                 dropout=config.bi_attn_drop)
-        # self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
-        self.proj = nn.Linear(config.input_dim, config.hidden_dim)
+        self.bi_attention = BiAttention(input_dim=config.input_dim,
+                                        memory_dim=config.input_dim,
+                                        hid_dim=config.hidden_dim,
+                                        dropout=config.bi_attn_drop)
+        self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
         self.query_proj = nn.Linear(config.input_dim, 2*config.hidden_dim)
         self.hidden_dim = config.hidden_dim
 
@@ -979,14 +978,12 @@ class HierarchicalGraphNetwork(nn.Module):
         # bert encoding query vec
         query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
         query_vec = self.query_proj(query_vec)
-        # attn_output, trunc_query_state = self.bi_attention(context_encoding,
-        #                                                    trunc_query_state,
-        #                                                    trunc_query_mapping)
+        attn_output, trunc_query_state = self.bi_attention(context_encoding,
+                                                           trunc_query_state,
+                                                           trunc_query_mapping)
 
-        # input_state = self.bi_attn_linear(attn_output) # N x L x d
-        input_state = self.proj(context_encoding) 
+        input_state = self.bi_attn_linear(attn_output) # N x L x d
         input_state = self.sent_lstm(input_state, batch['context_lens'])
-
 
         for l in range(self.config.num_gnn_layers):
             graph_out_dict = self.graph_blocks[l](batch, input_state, query_vec)
