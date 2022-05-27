@@ -37,8 +37,8 @@ from typing import Any, ContextManager, List, Tuple
 from typing import Optional, Tuple
 
 from .file_utils import add_start_docstrings
-from .modeling_multimodal_structadapt_bert import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
-from copy import deepcopy
+from .modeling_structadapt_multimodal_bert import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
+
 
 logger = logging.getLogger(__name__)
 
@@ -183,16 +183,16 @@ class RobertaModelAdapter(BertModel):
         self.embeddings.word_embeddings = value
 
 
-class MultimodalStructAdaptRoberta(nn.Module):
+class MultiModalStructAdaptRoberta(nn.Module):
     def __init__(self, config):
-        super(MultimodalStructAdaptRoberta, self).__init__()     
+        super(MultiModalStructAdaptRoberta, self).__init__()     
         # Transformer Encoder
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, hgn_config=config, adapter_size=config.adapter_size)
         # self.hgn = HierarchicalGraphNetwork(config)
         q_dim = self.hidden_dim if config.q_update else config.input_dim
-        pred_config = deepcopy(config)
-        pred_config.input_dim = self.encoder.config.hidden_size
-        self.predict_layer = PredictionLayer(pred_config, q_dim)
+        self.predict_layer = PredictionLayer(config, q_dim)
+        self.predict_layer_sent_mlp = OutputLayer(config.adapter_size*2, config, num_answer=1)
+        self.predict_layer_entity_mlp = OutputLayer(config.adapter_size*2, config, num_answer=1)
 
 
     def forward(
@@ -222,18 +222,32 @@ class MultimodalStructAdaptRoberta(nn.Module):
                 attention_mask=batch['context_mask'],
                 batch=batch
             )
-            (para_predictions, sent_predictions, ent_predictions) = graph_out
-            # _, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, input_state)
-            
+            # 2) node preds
+            ent_state = graph_out['graph_state'][:, 1+graph_out['max_para_num']+graph_out['max_sent_num']:, :]
+
+            gat_logit = self.predict_layer_sent_mlp(graph_out['graph_state'][:, :1+graph_out['max_para_num']+graph_out['max_sent_num'], :]) # N x max_sent x 1
+            para_logit = gat_logit[:, 1:1+graph_out['max_para_num'], :].contiguous()
+            sent_logit = gat_logit[:, 1+graph_out['max_para_num']:, :].contiguous()
+
+            ent_prediction = self.predict_layer_entity_mlp(ent_state).view(graph_out['N'], -1)
+            ent_prediction = ent_prediction - 1e30 * (1 - batch['ans_cand_mask'])
+
+            para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
+            para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
+
+            sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
+            sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
+
+            # 3) span pred
             query_mapping = batch['query_mapping']
             predictions = self.predict_layer(batch, input_state[0], packing_mask=query_mapping, return_yp=return_yp)
 
             if return_yp:
                 start, end, q_type, yp1, yp2 = predictions
-                return start, end, q_type, para_predictions, sent_predictions, ent_predictions, yp1, yp2
+                return start, end, q_type, para_prediction, sent_prediction, ent_prediction, yp1, yp2
             else:
                 start, end, q_type = predictions
-                return start, end, q_type, para_predictions, sent_predictions, ent_predictions
+                return start, end, q_type, para_prediction, sent_prediction, ent_prediction
 
             
 
