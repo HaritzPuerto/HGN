@@ -397,20 +397,24 @@ class StructAdapt(nn.Module):
         super().__init__()
         
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.hgn = HierarchicalGraphNetwork(hgn_config)
+        self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
+        hgn_new_config = copy.deepcopy(hgn_config)
+        hgn_new_config.hidden_dim = config.adapter_size
+        
+        self.hgn = HierarchicalGraphNetwork(hgn_new_config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.wo = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.wo = nn.Linear(config.adapter_size, config.hidden_size, bias=False)
 
 
     def forward(self, hidden_states, batch):
         norm_x = self.layer_norm(hidden_states)
 
-        layer_output, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, norm_x)
+        layer_output, graph_out_dict = self.hgn(batch, norm_x)
         layer_output = self.dropout(layer_output)
         layer_output = self.wo(layer_output)
 
         layer_output = layer_output + hidden_states # residual connection
-        return layer_output, para_predictions, sent_predictions, ent_predictions
+        return layer_output, graph_out_dict
         
 
 class GatedAttention(nn.Module):
@@ -504,11 +508,11 @@ class BertLayer(nn.Module):
         layer_output_text = self.output(intermediate_output_text, attention_output_text)
         
         #### Top Adapter
-        layer_output, para_predictions, sent_predictions, ent_predictions = self.adapter_graph_top(layer_output_text, batch)
+        layer_output, graph_out_dict = self.adapter_graph_top(layer_output_text, batch)
 
         outputs = (layer_output,) + outputs
         
-        return (outputs, (para_predictions, sent_predictions, ent_predictions))
+        return (outputs, graph_out_dict)
 
 
 class BertEncoder(nn.Module):
@@ -947,7 +951,7 @@ class HierarchicalGraphNetwork(nn.Module):
                                         hid_dim=config.hidden_dim,
                                         dropout=config.bi_attn_drop)
         self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
-
+        self.query_proj = nn.Linear(config.input_dim, 2*config.hidden_dim)
         self.hidden_dim = config.hidden_dim
 
         self.sent_lstm = LSTMWrapper(input_dim=config.hidden_dim,
@@ -961,13 +965,13 @@ class HierarchicalGraphNetwork(nn.Module):
 
         self.ctx_attention = GatedAttention(input_dim=config.hidden_dim*2,
                                             memory_dim=config.hidden_dim if config.q_update else config.hidden_dim*2,
-                                            hid_dim=self.config.input_dim,
+                                            hid_dim=self.config.hidden_dim,
                                             dropout=config.bi_attn_drop,
                                             gate_method=self.config.ctx_attn)
 
         q_dim = self.hidden_dim if config.q_update else config.input_dim
 
-        self.predict_layer = PredictionLayer(self.config, q_dim)
+        # self.predict_layer = PredictionLayer(self.config, q_dim)
 
     def forward(self, batch, context_encoding):
         query_mapping = batch['query_mapping']
@@ -977,7 +981,7 @@ class HierarchicalGraphNetwork(nn.Module):
         trunc_query_state = (context_encoding * query_mapping.unsqueeze(2))[:, :self.max_query_length, :].contiguous()
         # bert encoding query vec
         query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
-
+        query_vec = self.query_proj(query_vec)
         attn_output, trunc_query_state = self.bi_attention(context_encoding,
                                                            trunc_query_state,
                                                            trunc_query_mapping)
@@ -985,24 +989,14 @@ class HierarchicalGraphNetwork(nn.Module):
         input_state = self.bi_attn_linear(attn_output) # N x L x d
         input_state = self.sent_lstm(input_state, batch['context_lens'])
 
-        if self.config.q_update:
-            query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
-
         para_logits, sent_logits = [], []
         para_predictions, sent_predictions, ent_predictions = [], [], []
 
         for l in range(self.config.num_gnn_layers):
-            _, graph_state, graph_mask, sent_state, query_vec, para_logit, para_prediction, \
-            sent_logit, sent_prediction, ent_logit = self.graph_blocks[l](batch, input_state, query_vec)
+            graph_out_dict = self.graph_blocks[l](batch, input_state, query_vec)
 
-            para_logits.append(para_logit)
-            sent_logits.append(sent_logit)
-            para_predictions.append(para_prediction)
-            sent_predictions.append(sent_prediction)
-            ent_predictions.append(ent_logit)
-
-        input_state, _ = self.ctx_attention(input_state, graph_state, graph_mask.squeeze(-1))
-        return input_state, para_predictions[-1], sent_predictions[-1], ent_predictions[-1]
+        input_state, _ = self.ctx_attention(input_state, graph_out_dict['graph_state'], graph_out_dict['node_mask'].squeeze(-1))
+        return input_state, graph_out_dict
         
 
 def tok_to_ent(tok2ent):
@@ -1105,7 +1099,7 @@ class GATSelfAttention(nn.Module):
             self.a_type.append(get_weights((out_dim * 2, 1)))
 
             if self.q_attn:
-                q_dim = self.config.hidden_dim if self.config.q_update else self.config.input_dim
+                q_dim = in_dim
                 self.qattn_W1.append(get_weights((q_dim, out_dim * 2)))
                 self.qattn_W2.append(get_weights((out_dim * 2, out_dim * 2)))
 
@@ -1215,16 +1209,17 @@ class GraphBlock(nn.Module):
         if self.config.q_update:
             self.gat_linear = nn.Linear(self.hidden_dim*2, self.hidden_dim)
         else:
-            self.gat_linear = nn.Linear(self.config.input_dim, self.hidden_dim*2)
+            # default
+            self.gat_linear = nn.Linear(self.config.hidden_dim*2, self.hidden_dim*2)
 
         if self.config.q_update:
             self.gat = AttentionLayer(self.hidden_dim, self.hidden_dim, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-            self.sent_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
-            self.entity_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
+            # self.sent_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
+            # self.entity_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
         else:
             self.gat = AttentionLayer(self.hidden_dim*2, self.hidden_dim*2, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-            self.sent_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
-            self.entity_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
+            # self.sent_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
+            # self.entity_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
 
     def forward(self, batch, input_state, query_vec):
         context_lens = batch['context_lens']
@@ -1275,25 +1270,31 @@ class GraphBlock(nn.Module):
         assert graph_adj.size(1) == node_mask.size(1)
 
         graph_state = self.gat(graph_state, graph_adj, node_mask=node_mask, query_vec=query_vec) # N x (1+max_para+max_sent) x d
-        ent_state = graph_state[:, 1+max_para_num+max_sent_num:, :]
+        # ent_state = graph_state[:, 1+max_para_num+max_sent_num:, :]
 
-        gat_logit = self.sent_mlp(graph_state[:, :1+max_para_num+max_sent_num, :]) # N x max_sent x 1
-        para_logit = gat_logit[:, 1:1+max_para_num, :].contiguous()
-        sent_logit = gat_logit[:, 1+max_para_num:, :].contiguous()
+        # gat_logit = self.sent_mlp(graph_state[:, :1+max_para_num+max_sent_num, :]) # N x max_sent x 1
+        # para_logit = gat_logit[:, 1:1+max_para_num, :].contiguous()
+        # sent_logit = gat_logit[:, 1+max_para_num:, :].contiguous()
 
-        query_vec = graph_state[:, 0, :].squeeze(1)
+        # query_vec = graph_state[:, 0, :].squeeze(1)
 
-        ent_logit = self.entity_mlp(ent_state).view(N, -1)
-        ent_logit = ent_logit - 1e30 * (1 - batch['ans_cand_mask'])
+        # ent_logit = self.entity_mlp(ent_state).view(N, -1)
+        # ent_logit = ent_logit - 1e30 * (1 - batch['ans_cand_mask'])
 
-        para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
-        para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
+        # para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
+        # para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
 
-        sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
-        sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
+        # sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
+        # sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
 
-        return input_state, graph_state, node_mask, sent_state, query_vec, para_logit, para_prediction, \
-            sent_logit, sent_prediction, ent_logit
+        return {'graph_state': graph_state,
+                'node_mask': node_mask,
+                'max_para_num': max_para_num,
+                'max_sent_num': max_sent_num,
+                'N': N}
+                
+        # return input_state, graph_state, node_mask, sent_state, query_vec, para_logit, para_prediction, \
+        #     sent_logit, sent_prediction, ent_logit
 
 class GatedAttention(nn.Module):
     def __init__(self, input_dim, memory_dim, hid_dim, dropout, gate_method='gate_att_up'):
