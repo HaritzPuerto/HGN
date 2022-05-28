@@ -4,3 +4,4 @@ data/
 slurm*
 .neptune/
 data.zip
+configs/
