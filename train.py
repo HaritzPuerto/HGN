@@ -14,11 +14,16 @@ from csr_mhqa.utils import *
 from models.HGN import *
 from transformers import get_linear_schedule_with_warmup
 
+import neptune.new as neptune
+from neptune.new.integrations.python_logger import NeptuneHandler
+
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+run = neptune.init()
+logger.addHandler(NeptuneHandler(run=run))
 #########################################################################
 # Initialize arguments
 ##########################################################################
@@ -32,6 +37,7 @@ else:
     argv = sys.argv[1:]
 args = parser.parse_args(argv)
 args = complete_default_train_parser(args)
+run["model/parameters"] = vars(args)
 
 logger.info('-' * 100)
 logger.info('Input Argument Information')
@@ -148,9 +154,9 @@ model.zero_grad()
 list_few_shot_eval = np.array([100, 500, 1000, 2000, 3000])/args.batch_size
 logger.info(f"Few-shot evaluation at {list_few_shot_eval}")
 
-train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
+train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch",file=sys.stdout, disable=args.local_rank not in [-1, 0])
 for epoch in train_iterator:
-    epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+    epoch_iterator = tqdm(train_dataloader, desc="Iteration", file=sys.stdout, disable=args.local_rank not in [-1, 0])
     train_dataloader.refresh()
     dev_dataloader.refresh()
 
@@ -190,6 +196,9 @@ for epoch in train_iterator:
             else:
                 tr_loss[idx] += loss_list[idx]
 
+            run["train/epoch/"+loss_name[idx]].log(loss_list[idx].data.item())
+            run["train/epoch/lr"].log(scheduler.get_lr()[0])
+
         if (step + 1) % args.gradient_accumulation_steps == 0:
             optimizer.step()
             scheduler.step()  # Update learning rate schedule
@@ -217,17 +226,23 @@ for epoch in train_iterator:
             logger.info(f"Evaluating on dev set at step {global_step}")
             output_pred_file = os.path.join(args.exp_name, f'pred.global_step_{global_step}.json')
             output_eval_file = os.path.join(args.exp_name, f'eval.global_step_{global_step}.json')
-            metrics, threshold = eval_model(args, encoder, model,
+            metrics, threshold, answer_dict = eval_model(args, encoder, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
+            run["dev/few_shot/preds"].log(answer_dict)
+            for key, value in metrics.items():
+                run[f"dev/few_shot/{key}"] = round(value*100, 2)
             model.train()
 
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
         output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
-        metrics, threshold = eval_model(args, encoder, model,
+        metrics, threshold, answer_dict = eval_model(args, encoder, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
+        run["dev/epoch/preds"].log(answer_dict)
+        for key, value in metrics.items():
+            run[f"dev/epoch/{key}"] = round(value*100, 2)
 
         if metrics['joint_f1'] >= best_joint_f1:
             best_joint_f1 = metrics['joint_f1']
@@ -249,3 +264,6 @@ for epoch in train_iterator:
 
 if args.local_rank in [-1, 0]:
     tb_writer.close()
+
+
+run.stop()

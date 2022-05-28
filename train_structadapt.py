@@ -15,6 +15,8 @@ from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
 from csr_mhqa.utils import load_encoder_model, convert_to_tokens, hotpot_eval, MODEL_CLASSES, IGNORE_INDEX
 from models.PredictionLayerOnly import *
 from transformers import get_linear_schedule_with_warmup, StructAdaptRoberta, AdamW
+import neptune.new as neptune
+from neptune.new.integrations.python_logger import NeptuneHandler
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -122,7 +124,7 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
-    for batch in tqdm(dataloader):
+    for batch in tqdm(dataloader, file=sys.stdout):
         with torch.no_grad():
             batch['context_mask'] = batch['context_mask'].float().to(args.device)
             start_prediction, end_prediction, type_prediction, para, sent, ent, yp1, yp2 = model(batch=batch, return_yp=True)
@@ -180,8 +182,10 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
     best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
     json.dump(best_metrics, open(eval_file, 'w'))
 
-    return best_metrics, best_threshold
+    return best_metrics, best_threshold, answer_dict
 
+run = neptune.init()
+logger.addHandler(NeptuneHandler(run=run))
 #########################################################################
 # Initialize arguments
 ##########################################################################
@@ -195,6 +199,8 @@ else:
     argv = sys.argv[1:]
 args = parser.parse_args(argv)
 args = complete_default_train_parser(args)
+run["model/parameters"] = vars(args)
+
 
 logger.info('-' * 100)
 logger.info('Input Argument Information')
@@ -269,9 +275,9 @@ if args.local_rank in [-1, 0]:
 
 model.zero_grad()
 list_few_shot_eval = np.array([100, 500, 1000, 2000, 3000])/args.batch_size
-train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
+train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", file=sys.stdout, disable=args.local_rank not in [-1, 0])
 for epoch in train_iterator:
-    epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+    epoch_iterator = tqdm(train_dataloader, desc="Iteration", file=sys.stdout, disable=args.local_rank not in [-1, 0])
     train_dataloader.refresh()
     dev_dataloader.refresh()
 
@@ -291,6 +297,8 @@ for epoch in train_iterator:
                 tr_loss[idx] += loss_list[idx].data.item()
             else:
                 tr_loss[idx] += loss_list[idx]
+            run["train/epoch/"+loss_name[idx]].log(loss_list[idx].data.item())
+            run["train/epoch/lr"].log(scheduler.get_lr()[0])
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             optimizer.step()
@@ -318,9 +326,12 @@ for epoch in train_iterator:
             logger.info(f"Evaluating on dev set at step {global_step}")
             output_pred_file = os.path.join(args.exp_name, f'pred.global_step_{global_step}.json')
             output_eval_file = os.path.join(args.exp_name, f'eval.global_step_{global_step}.json')
-            metrics, threshold = eval_model(args, model,
+            metrics, threshold, answer_dict = eval_model(args, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
+            for key, value in metrics.items():
+                run[f"dev/few_shot/{key}"] = round(value*100, 2)
+            run["dev/few_shot/preds"].log(answer_dict)
             model.train()
 
     torch.save({k: v.cpu() for k, v in model.state_dict().items()},
@@ -328,9 +339,13 @@ for epoch in train_iterator:
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
         output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.json')
-        metrics, threshold = eval_model(args, model,
+        metrics, threshold, answer_dict = eval_model(args, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
+        for key, value in metrics.items():
+            run[f"dev/epoch/{key}"] = round(value*100, 2)
+        run["dev/epoch/preds"].log(answer_dict)
+        
         if metrics['joint_f1'] >= best_joint_f1:
             best_joint_f1 = metrics['joint_f1']
             torch.save({'epoch': epoch+1,
@@ -352,3 +367,5 @@ for epoch in train_iterator:
 
 if args.local_rank in [-1, 0]:
     tb_writer.close()
+
+run.stop()

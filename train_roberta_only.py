@@ -9,6 +9,8 @@ import json
 from os.path import join
 from tqdm import tqdm, trange
 from tensorboardX import SummaryWriter
+import neptune.new as neptune
+from neptune.new.integrations.python_logger import NeptuneHandler
 
 from csr_mhqa.argument_parser import default_train_parser, complete_default_train_parser, json_to_argv
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
@@ -115,8 +117,10 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
     best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
     json.dump(best_metrics, open(eval_file, 'w'))
 
-    return best_metrics, best_threshold
+    return best_metrics, best_threshold, answer_dict
 
+run = neptune.init()
+logger.addHandler(NeptuneHandler(run=run))
 #########################################################################
 # Initialize arguments
 ##########################################################################
@@ -172,6 +176,12 @@ else:
 # Set Encoder and Model
 encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
 model = PredictionLayer(config=args)
+
+# print num params in millions
+num_params_encoder = sum(p.numel() for p in encoder.parameters())
+num_params_pred_layer = sum(p.numel() for p in model.parameters())
+logger.info(f"Number of parameters in encoder: {num_params_encoder / 1e6:.2f}M")
+logger.info(f"Number of parameters in prediction layer: {num_params_pred_layer / 1e6:.2f}M")
 
 if encoder_path is not None:
     encoder.load_state_dict(torch.load(encoder_path))
@@ -284,6 +294,8 @@ for epoch in train_iterator:
                 tr_loss[idx] += loss_list[idx].data.item()
             else:
                 tr_loss[idx] += loss_list[idx]
+            run["train/epoch/"+loss_name[idx]].log(loss_list[idx].data.item())
+            run["train/epoch/lr"].log(scheduler.get_lr()[0])
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             optimizer.step()
@@ -315,9 +327,12 @@ for epoch in train_iterator:
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
         output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
-        metrics, threshold = eval_model(args, encoder, model,
+        metrics, threshold, answer_dict = eval_model(args, encoder, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
+        for key, value in metrics.items():
+            run[f"dev/epoch/{key}"] = round(value*100, 2)
+        run["dev/epoch/preds"].log(answer_dict)
 
         if metrics['joint_f1'] >= best_joint_f1:
             best_joint_f1 = metrics['joint_f1']
@@ -339,3 +354,5 @@ for epoch in train_iterator:
 
 if args.local_rank in [-1, 0]:
     tb_writer.close()
+
+run.stop()

@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from torch import nn
 from tqdm import tqdm
+import sys
 
 from model_envs import MODEL_CLASSES, ALL_MODELS
 from transformers.tokenization_bert import whitespace_tokenize, BasicTokenizer, BertTokenizer
@@ -102,7 +103,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
-    for batch in tqdm(dataloader):
+    for batch in tqdm(dataloader, file=sys.stdout):
         with torch.no_grad():
             inputs = {'input_ids':      batch['context_idxs'],
                       'attention_mask': batch['context_mask'],
@@ -162,7 +163,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
                 best_metrics = metrics
                 shutil.move(tmp_file, pred_file)
 
-        return best_metrics, best_threshold
+        return best_metrics, best_threshold, answer_dict
 
     best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
     json.dump(best_metrics, open(eval_file, 'w'))
