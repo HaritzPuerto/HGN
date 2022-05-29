@@ -34,6 +34,7 @@ def get_training_params(graphqa, print_stats=False):
     num_fronzen_params = 0
     num_params_hgn = 0
     training_params = ['adapter', 'hgn']
+    dict_params = {p: 0 for p in training_params}
 
     for n, p in graphqa.named_parameters():
         trained = False
@@ -43,25 +44,25 @@ def get_training_params(graphqa, print_stats=False):
                 trained = True
                 params.append(p)
                 params_name.append(n)
+                dict_params[trained_param] += p.numel()
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-        if 'encoder' in n:
-            num_params_hgn += p.numel()
-        if 'hgn' in n:
-            num_params_hgn += p.numel()
-        if 'adapter' in n:
-            num_params_hgn -= p.numel()
+        
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
+        run["model/weights/num_training_params"] = f"{num_training_params/1e6:.2f}M"
         logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
+        run["model/weights/num_fronzen_params"] = f"{num_fronzen_params/1e6:.2f}M"
         logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
-        logger.info(f"Number of adapter parameters: {(num_total_params - num_params_hgn)/1e6:.2f}M")
+        run["model/weights/num_total_params"] = f"{num_total_params/1e6:.2f}M"
         logger.info(f"-----------------------")
-        logger.info(f"Number of training parameters in original HGN: {num_params_hgn/1e6:.2f}M")
+        for k, v in dict_params.items():
+            logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
+            run.log(f"model/weights/{k}_params", f"{v/1e6:.2f}M")
         logger.info("Ratio learned parameters: %.4f", num_training_params / num_fronzen_params)
-
+        run["model/weights/ratio_learned_params"] = f"{num_training_params / num_fronzen_params:.4f}"
     return params_name, params
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
