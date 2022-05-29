@@ -55,16 +55,16 @@ def get_training_params(graphqa, print_stats=False):
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
         run["model/weights/num_training_params"] = f"{num_training_params/1e6:.2f}M"
         logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
-        run.log("model/weights/num_fronzen_params", f"{num_fronzen_params/1e6:.2f}M")
+        run["model/weights/num_fronzen_params"] = f"{num_fronzen_params/1e6:.2f}M"
         logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
-        run.log("model/weights/num_total_params", f"{num_total_params/1e6:.2f}M")
+        run["model/weights/num_total_params"] = f"{num_total_params/1e6:.2f}M"
         logger.info(f"-----------------------")
         for k, v in dict_params.items():
             logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
-            run.log(f"model/weights/{k}_params", f"{v/1e6:.2f}M")
+            run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
         logger.info(f"-----------------------")
         logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
-        run.log("model/weights/ratio_learned_params", num_training_params / num_fronzen_params)
+        run["model/weights/ratio_learned_params"] = num_training_params / num_fronzen_params
     return params_name, params
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):

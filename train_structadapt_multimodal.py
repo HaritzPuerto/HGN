@@ -61,7 +61,7 @@ def get_training_params(graphqa, print_stats=False):
         logger.info(f"-----------------------")
         for k, v in dict_params.items():
             logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
-            run.log(f"model/weights/{k}_params", f"{v/1e6:.2f}M")
+            run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
         logger.info(f"-----------------------")
         logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
         run["model/weights/ratio_learned_params"] = f"{ num_training_params / num_fronzen_params:.2f}"
