@@ -322,7 +322,7 @@ for epoch in train_iterator:
             epoch_iterator.close()
             break
 
-        if step+1 in list_few_shot_eval:
+        if epoch == 0 and step+1 in list_few_shot_eval:
             logger.info(f"Evaluating on dev set at step {global_step}")
             output_pred_file = os.path.join(args.exp_name, f'pred.global_step_{global_step}.json')
             output_eval_file = os.path.join(args.exp_name, f'eval.global_step_{global_step}.json')
@@ -330,7 +330,7 @@ for epoch in train_iterator:
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
             for key, value in metrics.items():
-                run[f"dev/few_shot/{key}"] = round(value*100, 2)
+                run[f"dev/few_shot/{key}"].log(round(value*100, 2))
             run["dev/few_shot/preds"].log(answer_dict)
             model.train()
 
@@ -343,7 +343,7 @@ for epoch in train_iterator:
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
         for key, value in metrics.items():
-            run[f"dev/epoch/{key}"] = round(value*100, 2)
+            run[f"dev/epoch/{key}"].log(round(value*100, 2))
         run["dev/epoch/preds"].log(answer_dict)
         
         if metrics['joint_f1'] >= best_joint_f1:
