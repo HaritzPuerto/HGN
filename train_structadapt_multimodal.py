@@ -189,7 +189,7 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
 
     return best_metrics, best_threshold, answer_dict
 
-run = neptune.init()
+run = neptune.init(tags=["StructAdapt", "MultiModal"])
 logger.addHandler(NeptuneHandler(run=run))
 #########################################################################
 # Initialize arguments
