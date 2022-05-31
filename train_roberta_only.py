@@ -119,7 +119,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
 
     return best_metrics, best_threshold, answer_dict
 
-run = neptune.init()
+run = neptune.init(tags=["Roberta", "fine-tuning"])
 logger.addHandler(NeptuneHandler(run=run))
 #########################################################################
 # Initialize arguments
@@ -182,7 +182,9 @@ num_params_encoder = sum(p.numel() for p in encoder.parameters())
 num_params_pred_layer = sum(p.numel() for p in model.parameters())
 logger.info(f"Number of parameters in encoder: {num_params_encoder / 1e6:.2f}M")
 logger.info(f"Number of parameters in prediction layer: {num_params_pred_layer / 1e6:.2f}M")
-
+run['model/weights/num_training_params'] = f"{(num_params_encoder + num_params_pred_layer)/ 1e6:.2f} M"
+run['model/weights/num_encoder_params'] = f"{num_params_encoder / 1e6:.2f} M"
+run['model/weights/num_pred_layer_params'] = f"{num_params_pred_layer / 1e6:.2f} M"
 if encoder_path is not None:
     encoder.load_state_dict(torch.load(encoder_path))
 if model_path is not None:
