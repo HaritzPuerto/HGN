@@ -298,3 +298,93 @@ class OutputLayer(nn.Module):
 
     def forward(self, hidden_states):
         return self.output(hidden_states)
+    
+    
+class RobertaModelAdapter4QA(nn.Module):
+    def __init__(self, config):
+        super(RobertaModelAdapter4QA, self).__init__()     
+        # Transformer Encoder
+        self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
+        self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
+        self.pred_layer = PredictionLayer(config)
+
+    def forward(
+            self,
+            batch=None,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            return_yp=True,
+        ):
+            r"""
+            start_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+                Labels for position (index) of the start of the labelled span for computing the token classification loss.
+                Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+                are not taken into account for computing the loss.
+            end_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+                Labels for position (index) of the end of the labelled span for computing the token classification loss.
+                Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+                are not taken into account for computing the loss.
+            """
+
+            
+            # 1) get transformer token embeddings
+            context_encoding = self.encoder(
+                input_ids=batch['context_idxs'],
+                attention_mask=batch['context_mask']
+            )[0]
+            context_encoding = self.pred_layer_projection(context_encoding)
+            return self.pred_layer(batch, context_encoding, return_yp=True)
+        
+class QAPredictionLayer(nn.Module):
+    """
+    Identical to baseline prediction layer
+    """
+    def __init__(self, config):
+        super(PredictionLayer, self).__init__()
+        self.config = config
+        self.input_dim = config.ctx_attn_hidden_dim
+        h_dim = config.hidden_dim
+
+        self.hidden = h_dim
+
+        self.start_linear = OutputLayer(self.input_dim, config, num_answer=1)
+        self.end_linear = OutputLayer(self.input_dim, config, num_answer=1)
+        self.type_linear = OutputLayer(self.input_dim, config, num_answer=4)
+
+        self.cache_S = 0
+        self.cache_mask = None
+
+    def get_output_mask(self, outer):
+        S = outer.size(1)
+        if S <= self.cache_S:
+            return Variable(self.cache_mask[:S, :S], requires_grad=False)
+        self.cache_S = S
+        np_mask = np.tril(np.triu(np.ones((S, S)), 0), 15)
+        self.cache_mask = outer.data.new(S, S).copy_(torch.from_numpy(np_mask))
+        return Variable(self.cache_mask, requires_grad=False)
+
+    def forward(self, batch, context_input, packing_mask=None, return_yp=False):
+        context_mask = batch['context_mask']
+        
+        # span pred
+        start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
+        end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
+        type_prediction = self.type_linear(context_input[:, 0, :])
+
+        if not return_yp:
+            return start_prediction, end_prediction, type_prediction
+
+        outer = start_prediction[:, :, None] + end_prediction[:, None]
+        outer_mask = self.get_output_mask(outer)
+        outer = outer - 1e30 * (1 - outer_mask[None].expand_as(outer))
+        if packing_mask is not None:
+            outer = outer - 1e30 * packing_mask[:, :, None]
+        # yp1: start
+        # yp2: end
+        yp1 = outer.max(dim=2)[0].max(dim=1)[1]
+        yp2 = outer.max(dim=1)[0].max(dim=1)[1]
+        return start_prediction, end_prediction, type_prediction, yp1, yp2
