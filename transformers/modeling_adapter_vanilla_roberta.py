@@ -283,3 +283,18 @@ class PredictionLayer(nn.Module):
         yp1 = outer.max(dim=2)[0].max(dim=1)[1]
         yp2 = outer.max(dim=1)[0].max(dim=1)[1]
         return start_prediction, end_prediction, type_prediction, sent_logit, yp1, yp2
+
+class OutputLayer(nn.Module):
+    def __init__(self, hidden_dim, config, num_answer=1):
+        super(OutputLayer, self).__init__()
+
+        self.output = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim*2),
+            nn.ReLU(),
+            BertLayerNorm(hidden_dim*2, eps=1e-12),
+            nn.Dropout(config.trans_drop),
+            nn.Linear(hidden_dim*2, num_answer),
+        )
+
+    def forward(self, hidden_states):
+        return self.output(hidden_states)
