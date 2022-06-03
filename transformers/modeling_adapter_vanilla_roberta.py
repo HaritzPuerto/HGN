@@ -37,9 +37,6 @@ from typing import Optional, Tuple
 from .file_utils import add_start_docstrings
 from .modeling_adapter_vanilla_bert import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
 
-from .HGN import HierarchicalGraphNetwork
-from .HGN_layers import PredictionLayer, OutputLayer
-
 from torch.autograd import Variable
 
 
