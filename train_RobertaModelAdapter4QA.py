@@ -12,7 +12,8 @@ from tensorboardX import SummaryWriter
 
 from csr_mhqa.argument_parser import default_train_parser, complete_default_train_parser, json_to_argv
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
-from csr_mhqa.utils import load_encoder_model, convert_to_tokens, hotpot_eval, MODEL_CLASSES, IGNORE_INDEX
+from csr_mhqa.utils import load_encoder_model, convert_to_tokens, MODEL_CLASSES, IGNORE_INDEX
+from eval.hotpot_evaluate_v1 import qa_eval
 from models.PredictionLayerOnly import *
 from transformers import get_linear_schedule_with_warmup, RobertaModelAdapter4QA, AdamW
 
@@ -143,9 +144,9 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
             tmp_file = os.path.join(os.path.dirname(pred_file), 'tmp.json')
             with open(tmp_file, 'w') as f:
                 json.dump(prediction, f)
-            metrics = hotpot_eval(tmp_file, dev_gold_file)
-            if metrics['joint_f1'] >= best_joint_f1:
-                best_joint_f1 = metrics['joint_f1']
+            metrics = qa_eval(tmp_file, dev_gold_file)
+            if metrics['f1'] >= best_joint_f1:
+                best_joint_f1 = metrics['f1']
                 best_threshold = thresholds[thresh_i]
                 best_metrics = metrics
                 shutil.move(tmp_file, pred_file)

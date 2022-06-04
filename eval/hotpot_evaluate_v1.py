@@ -128,6 +128,31 @@ def eval(prediction_file, gold_file):
 
     return metrics
 
+def qa_eval(prediction_file, gold_file):
+    with open(prediction_file) as f:
+        prediction = json.load(f)
+    with open(gold_file) as f:
+        gold = json.load(f)
+    metrics = {'em': 0, 'f1': 0, 'prec': 0, 'recall': 0,
+        'sp_em': 0, 'sp_f1': 0, 'sp_prec': 0, 'sp_recall': 0,
+        'joint_em': 0, 'joint_f1': 0, 'joint_prec': 0, 'joint_recall': 0}
+
+    total = 0
+    for dp in gold:
+        cur_id = dp['_id']
+        can_eval_joint = True
+        if cur_id not in prediction['answer']:
+            #print('missing answer {}'.format(cur_id))
+            can_eval_joint = False
+        else:
+            em, prec, recall = update_answer(
+                metrics, prediction['answer'][cur_id], dp['answer'])
+            total += 1
+    for k in metrics.keys():
+        metrics[k] /= total
+        
+    return metrics
+
 if __name__ == '__main__':
     print(eval(sys.argv[1], sys.argv[2]))
 
