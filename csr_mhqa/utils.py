@@ -163,12 +163,12 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
                 best_metrics = metrics
                 shutil.move(tmp_file, pred_file)
 
-        return best_metrics, best_threshold, answer_dict
+        return best_metrics, best_threshold
 
     best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
     json.dump(best_metrics, open(eval_file, 'w'))
 
-    return best_metrics, best_threshold
+    return best_metrics, best_threshold, answer_dict
 
 
 def get_weights(size, gain=1.414):
