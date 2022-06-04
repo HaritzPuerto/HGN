@@ -94,18 +94,14 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
 
     return optimizer
 
-def compute_loss(args, batch, start, end, q_type, sent):
+def compute_loss(args, batch, start, end, q_type):
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=IGNORE_INDEX)
     loss_span = args.ans_lambda * (criterion(start, batch['y1']) + criterion(end, batch['y2']))
     loss_type = args.type_lambda * criterion(q_type, batch['q_type'])
 
-    sent_pred = sent.view(-1, 2)
-    sent_gold = batch['is_support'].long().view(-1)
-    loss_sup = args.sent_lambda * criterion(sent_pred, sent_gold.long())
+    loss = loss_span + loss_type 
 
-    loss = loss_span + loss_type + loss_sup
-
-    return loss, loss_span, loss_type, loss_sup
+    return loss, loss_span, loss_type
 
 
 def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file):
@@ -119,12 +115,11 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
 
     thresholds = np.arange(0.1, 1.0, 0.05)
     N_thresh = len(thresholds)
-    total_sp_dict = [{} for _ in range(N_thresh)]
 
     for batch in tqdm(dataloader):
         with torch.no_grad():
             batch['context_mask'] = batch['context_mask'].float().to(args.device)            
-            start_prediction, end_prediction, type_prediction, sent, yp1, yp2 = model(batch, return_yp=True)
+            start_prediction, end_prediction, type_prediction, yp1, yp2 = model(batch, return_yp=True)
 
         type_prob = F.softmax(type_prediction, dim=1).data.cpu().numpy()
         answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
@@ -136,25 +131,6 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
         answer_type_prob_dict.update(answer_type_prob_dict_)
         answer_dict.update(answer_dict_)
 
-        predict_support_np = torch.sigmoid(sent[:, :, 1]).data.cpu().numpy()
-
-        for i in range(predict_support_np.shape[0]):
-            cur_sp_pred = [[] for _ in range(N_thresh)]
-            cur_id = batch['ids'][i]
-
-            for j in range(predict_support_np.shape[1]):
-                if j >= len(example_dict[cur_id].sent_names):
-                    break
-
-                for thresh_i in range(N_thresh):
-                    if predict_support_np[i, j] > thresholds[thresh_i]:
-                        cur_sp_pred[thresh_i].append(example_dict[cur_id].sent_names[j])
-
-            for thresh_i in range(N_thresh):
-                if cur_id not in total_sp_dict[thresh_i]:
-                    total_sp_dict[thresh_i][cur_id] = []
-
-                total_sp_dict[thresh_i][cur_id].extend(cur_sp_pred[thresh_i])
 
     def choose_best_threshold(ans_dict, pred_file):
         best_joint_f1 = 0
@@ -162,7 +138,6 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
         best_threshold = 0
         for thresh_i in range(N_thresh):
             prediction = {'answer': ans_dict,
-                          'sp': total_sp_dict[thresh_i],
                           'type': answer_type_dict,
                           'type_prob': answer_type_prob_dict}
             tmp_file = os.path.join(os.path.dirname(pred_file), 'tmp.json')
@@ -262,7 +237,7 @@ scheduler = get_linear_schedule_with_warmup(optimizer,
 # launch training
 ##########################################################################
 global_step = 0
-loss_name = ["loss_total", "loss_span", "loss_type", "loss_sup"]
+loss_name = ["loss_total", "loss_span", "loss_type"]
 tr_loss, logging_loss = [0] * len(loss_name), [0]* len(loss_name)
 if args.local_rank in [-1, 0]:
     tb_writer = SummaryWriter(args.exp_name)
@@ -280,9 +255,9 @@ for epoch in train_iterator:
         model.train()
 
         batch['context_mask'] = batch['context_mask'].float().to(args.device)
-        start, end, q_type, sents, _, _ = model(batch, return_yp=True)
+        start, end, q_type, yp1, yp2 = model(batch, return_yp=True)
         
-        loss_list = compute_loss(args, batch, start, end, q_type, sents)
+        loss_list = compute_loss(args, batch, start, end, q_type)
         del batch
 
         if args.n_gpu > 1:

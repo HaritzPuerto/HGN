@@ -306,7 +306,7 @@ class RobertaModelAdapter4QA(nn.Module):
         # Transformer Encoder
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
         self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
-        self.pred_layer = PredictionLayer(config)
+        self.pred_layer = QAPredictionLayer(config)
 
     def forward(
             self,
@@ -344,7 +344,7 @@ class QAPredictionLayer(nn.Module):
     Identical to baseline prediction layer
     """
     def __init__(self, config):
-        super(PredictionLayer, self).__init__()
+        super(QAPredictionLayer, self).__init__()
         self.config = config
         self.input_dim = config.ctx_attn_hidden_dim
         h_dim = config.hidden_dim
