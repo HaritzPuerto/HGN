@@ -988,7 +988,7 @@ class HierarchicalGraphNetwork(nn.Module):
         self.proj = nn.Linear(config.input_dim, config.hidden_dim)
         self.hidden_dim = config.hidden_dim
 
-        self.sent_lstm = LSTMWrapper(input_dim=config.hidden_dim,
+        self.sent_lstm = RNNWrapper(input_dim=config.hidden_dim,
                                      hidden_dim=config.hidden_dim,
                                      n_layer=1,
                                      dropout=config.lstm_drop)
@@ -1328,9 +1328,9 @@ class BiAttention(nn.Module):
         return torch.cat([input, output_one, input*output_one, output_two*output_one], dim=-1), memory
 
 
-class LSTMWrapper(nn.Module):
+class RNNWrapper(nn.Module):
     def __init__(self, input_dim, hidden_dim, n_layer, concat=False, bidir=True, dropout=0.3, return_last=True):
-        super(LSTMWrapper, self).__init__()
+        super(RNNWrapper, self).__init__()
         self.rnns = nn.ModuleList()
         for i in range(n_layer):
             if i == 0:
