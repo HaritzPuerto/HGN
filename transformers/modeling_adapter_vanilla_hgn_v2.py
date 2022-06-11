@@ -765,10 +765,10 @@ class PredictionLayer(nn.Module):
         # Node Classification
         if self.config.q_update:
             self.sent_mlp = OutputLayer(config.hidden_dim, config, num_answer=1)
-            # self.entity_mlp = OutputLayer(config.hidden_dim, config, num_answer=1)
+            self.entity_mlp = OutputLayer(config.hidden_dim, config, num_answer=1)
         else:
             self.sent_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
-            # self.entity_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
+            self.entity_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
 
         self.cache_S = 0
         self.cache_mask = None
