@@ -219,7 +219,7 @@ class VanillaAdapter_HGN_v2(nn.Module):
                 input_ids=batch['context_idxs'],
                 attention_mask=batch['context_mask']
             )[0]
-            batch['context_mask'] = batch['context_mask'].float().to('cuda')
+
             input_state, graph_dict = self.hgn(batch, return_yp=return_yp)
             query_mapping = batch['query_mapping']
             return self.pred_layer(batch, input_state, graph_dict, packing_mask=query_mapping, return_yp=return_yp)
@@ -764,10 +764,10 @@ class PredictionLayer(nn.Module):
         self.type_linear = OutputLayer(input_dim, config, num_answer=4)
         # Node Classification
         if self.config.q_update:
-            self.sent_mlp = OutputLayer(config.hidden_dim, config, num_answer=1)
+            self.sent_mlp = OutputLayer(config.hidden_dim, config, num_answer=2)
             self.entity_mlp = OutputLayer(config.hidden_dim, config, num_answer=1)
         else:
-            self.sent_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
+            self.sent_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=2)
             self.entity_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
 
         self.cache_S = 0
@@ -787,17 +787,12 @@ class PredictionLayer(nn.Module):
         ent_state = graph_out['graph_state'][:, 1+graph_out['max_para_num']+graph_out['max_sent_num']:, :]
 
         gat_logit = self.sent_mlp(graph_out['graph_state'][:, :1+graph_out['max_para_num']+graph_out['max_sent_num'], :]) # N x max_sent x 1
-        para_logit = gat_logit[:, 1:1+graph_out['max_para_num'], :].contiguous()
-        sent_logit = gat_logit[:, 1+graph_out['max_para_num']:, :].contiguous()
+        para_prediction = gat_logit[:, 1:1+graph_out['max_para_num'], :].contiguous()
+        sent_prediction = gat_logit[:, 1+graph_out['max_para_num']:, :].contiguous()
 
         ent_prediction = self.entity_mlp(ent_state).view(graph_out['N'], -1)
         ent_prediction = ent_prediction - 1e30 * (1 - batch['ans_cand_mask'])
 
-        para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
-        para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
-
-        sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
-        sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
         
         # Span Prediction
         context_mask = batch['context_mask']
