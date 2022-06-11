@@ -189,7 +189,6 @@ class RobertaModelAdapter4HotpotQA(nn.Module):
         super(RobertaModelAdapter4HotpotQA, self).__init__()     
         # Transformer Encoder
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
-        # self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
         self.pred_layer = PredictionLayer(config)
 
     def forward(
@@ -220,7 +219,6 @@ class RobertaModelAdapter4HotpotQA(nn.Module):
                 input_ids=batch['context_idxs'],
                 attention_mask=batch['context_mask']
             )[0]
-            context_encoding = self.pred_layer_projection(context_encoding)
             return self.pred_layer(batch, context_encoding, return_yp=True)
 
 
@@ -305,7 +303,6 @@ class RobertaModelAdapter4QA(nn.Module):
         super(RobertaModelAdapter4QA, self).__init__()     
         # Transformer Encoder
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
-        self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
         self.pred_layer = QAPredictionLayer(config)
 
     def forward(
@@ -336,7 +333,7 @@ class RobertaModelAdapter4QA(nn.Module):
                 input_ids=batch['context_idxs'],
                 attention_mask=batch['context_mask']
             )[0]
-            context_encoding = self.pred_layer_projection(context_encoding)
+            
             return self.pred_layer(batch, context_encoding, return_yp=True)
         
 class QAPredictionLayer(nn.Module):
