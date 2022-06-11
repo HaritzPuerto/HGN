@@ -190,14 +190,14 @@ class MultiModalAdapterRoberta(nn.Module):
         # Transformer Encoder
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
         self.hgn = HierarchicalGraphNetwork(config)
-        self.adapter_fusing_layer = GatedAttention(input_dim=config.input_dim,
-                                            memory_dim=config.input_dim,
-                                            hid_dim=config.ctx_attn_hidden_dim,
+        self.hgn_fusing_layer = GatedAttention(input_dim=config.hidden_dim,
+                                            memory_dim=config.hidden_dim if config.q_update else config.hidden_dim*2,
+                                            hid_dim=config.input_dim,
                                             dropout=config.bi_attn_drop,
                                             gate_method=config.ctx_attn)
         
         q_dim = config.hidden_dim if config.q_update else config.input_dim
-        self.predict_layer = PredictionLayer(config, q_dim)
+        self.pred_layer = PredictionLayer(config, q_dim)
 
     def forward(
             self,
@@ -227,21 +227,14 @@ class MultiModalAdapterRoberta(nn.Module):
             )
             # 2) graph module
             batch['context_encoding'] = encoder_outputs_graph[0]
-            batch['context_mask'] = batch['context_mask'].float().to('cuda')
-            graph_state, graph_mask, para_predictions, sent_predictions, ent_predictions = self.hgn(batch, return_yp=return_yp)
+            graph_dict = self.hgn(batch)
+            query_mapping = batch['query_mapping']
+
 
             # 3) Fusing layer
-            multimodal_token_emb, _ = self.adapter_fusing_layer(encoder_outputs_text[0], graph_state, graph_mask)
+            multimodal_token_emb, _ = self.hgn_fusing_layer(encoder_outputs_text[0], graph_dict['graph_state'], graph_dict['node_mask'].squeeze(-1))
 
-            predictions = self.predict_layer(batch, multimodal_token_emb, packing_mask=batch['query_mapping'], return_yp=return_yp)
-
-            if return_yp:
-                start, end, q_type, yp1, yp2 = predictions
-                return start, end, q_type, para_predictions, sent_predictions, ent_predictions, yp1, yp2
-            else:
-                start, end, q_type = predictions
-                return start, end, q_type, para_predictions, sent_predictions, ent_predictions
-
+            return self.pred_layer(batch, multimodal_token_emb, graph_dict, packing_mask=query_mapping, return_yp=return_yp)
 
 class HierarchicalGraphNetwork(nn.Module):
     """
@@ -269,19 +262,7 @@ class HierarchicalGraphNetwork(nn.Module):
         for _ in range(self.config.num_gnn_layers):
             self.graph_blocks.append(GraphBlock(self.config.q_attn, config))
 
-        self.graph_state_proj = nn.Linear(config.hidden_dim * 2, config.input_dim)
-
-        # self.ctx_attention = GatedAttention(input_dim=config.hidden_dim*2,
-        #                                     memory_dim=config.hidden_dim if config.q_update else config.hidden_dim*2,
-        #                                     hid_dim=self.config.ctx_attn_hidden_dim,
-        #                                     dropout=config.bi_attn_drop,
-        #                                     gate_method=self.config.ctx_attn)
-
-        # q_dim = self.hidden_dim if config.q_update else config.input_dim
-
-        # self.predict_layer = PredictionLayer(self.config, q_dim)
-
-    def forward(self, batch, return_yp):
+    def forward(self, batch):
         query_mapping = batch['query_mapping']
         context_encoding = batch['context_encoding']
 
@@ -301,30 +282,10 @@ class HierarchicalGraphNetwork(nn.Module):
         if self.config.q_update:
             query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
 
-        para_logits, sent_logits = [], []
-        para_predictions, sent_predictions, ent_predictions = [], [], []
-
         for l in range(self.config.num_gnn_layers):
-            new_input_state, graph_state, graph_mask, sent_state, query_vec, para_logit, para_prediction, \
-            sent_logit, sent_prediction, ent_logit = self.graph_blocks[l](batch, input_state, query_vec)
+            graph_out_dict = self.graph_blocks[l](batch, input_state, query_vec)
 
-            para_logits.append(para_logit)
-            sent_logits.append(sent_logit)
-            para_predictions.append(para_prediction)
-            sent_predictions.append(sent_prediction)
-            ent_predictions.append(ent_logit)
-
-        graph_state = self.graph_state_proj(graph_state)
-        return graph_state, graph_mask.squeeze(-1), para_predictions[-1], sent_predictions[-1], ent_predictions[-1]
-        input_state, _ = self.ctx_attention(input_state, graph_state, graph_mask.squeeze(-1))
-        predictions = self.predict_layer(batch, input_state, packing_mask=query_mapping, return_yp=return_yp)
-
-        if return_yp:
-            start, end, q_type, yp1, yp2 = predictions
-            return start, end, q_type, para_predictions[-1], sent_predictions[-1], ent_predictions[-1], yp1, yp2
-        else:
-            start, end, q_type = predictions
-            return start, end, q_type, para_predictions[-1], sent_predictions[-1], ent_predictions[-1]
+        return graph_out_dict
 
 def tok_to_ent(tok2ent):
     if tok2ent == 'mean':
@@ -540,12 +501,12 @@ class GraphBlock(nn.Module):
 
         if self.config.q_update:
             self.gat = AttentionLayer(self.hidden_dim, self.hidden_dim, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-            self.sent_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
-            self.entity_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
+            # self.sent_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
+            # self.entity_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
         else:
             self.gat = AttentionLayer(self.hidden_dim*2, self.hidden_dim*2, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-            self.sent_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
-            self.entity_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
+            # self.sent_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
+            # self.entity_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
 
     def forward(self, batch, input_state, query_vec):
         context_lens = batch['context_lens']
@@ -596,25 +557,32 @@ class GraphBlock(nn.Module):
         assert graph_adj.size(1) == node_mask.size(1)
 
         graph_state = self.gat(graph_state, graph_adj, node_mask=node_mask, query_vec=query_vec) # N x (1+max_para+max_sent) x d
-        ent_state = graph_state[:, 1+max_para_num+max_sent_num:, :]
+        
+        return {'graph_state': graph_state,
+                'node_mask': node_mask,
+                'max_para_num': max_para_num,
+                'max_sent_num': max_sent_num,
+                'N': N}
+        
+        # ent_state = graph_state[:, 1+max_para_num+max_sent_num:, :]
 
-        gat_logit = self.sent_mlp(graph_state[:, :1+max_para_num+max_sent_num, :]) # N x max_sent x 1
-        para_logit = gat_logit[:, 1:1+max_para_num, :].contiguous()
-        sent_logit = gat_logit[:, 1+max_para_num:, :].contiguous()
+        # gat_logit = self.sent_mlp(graph_state[:, :1+max_para_num+max_sent_num, :]) # N x max_sent x 1
+        # para_logit = gat_logit[:, 1:1+max_para_num, :].contiguous()
+        # sent_logit = gat_logit[:, 1+max_para_num:, :].contiguous()
 
-        query_vec = graph_state[:, 0, :].squeeze(1)
+        # query_vec = graph_state[:, 0, :].squeeze(1)
 
-        ent_logit = self.entity_mlp(ent_state).view(N, -1)
-        ent_logit = ent_logit - 1e30 * (1 - batch['ans_cand_mask'])
+        # ent_logit = self.entity_mlp(ent_state).view(N, -1)
+        # ent_logit = ent_logit - 1e30 * (1 - batch['ans_cand_mask'])
 
-        para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
-        para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
+        # para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
+        # para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
 
-        sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
-        sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
+        # sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
+        # sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
 
-        return input_state, graph_state, node_mask, sent_state, query_vec, para_logit, para_prediction, \
-            sent_logit, sent_prediction, ent_logit
+        # return input_state, graph_state, node_mask, sent_state, query_vec, para_logit, para_prediction, \
+        #     sent_logit, sent_prediction, ent_logit
 
 class GatedAttention(nn.Module):
     def __init__(self, input_dim, memory_dim, hid_dim, dropout, gate_method='gate_att_up'):
@@ -756,6 +724,7 @@ class LSTMWrapper(nn.Module):
         return outputs[-1]
 
 
+
 class PredictionLayer(nn.Module):
     """
     Identical to baseline prediction layer
@@ -763,14 +732,18 @@ class PredictionLayer(nn.Module):
     def __init__(self, config, q_dim):
         super(PredictionLayer, self).__init__()
         self.config = config
-        input_dim = config.ctx_attn_hidden_dim
-        h_dim = config.hidden_dim
-
-        self.hidden = h_dim
+        input_dim = config.input_dim
 
         self.start_linear = OutputLayer(input_dim, config, num_answer=1)
         self.end_linear = OutputLayer(input_dim, config, num_answer=1)
         self.type_linear = OutputLayer(input_dim, config, num_answer=4)
+        # Node Classification
+        if self.config.q_update:
+            self.sent_mlp = OutputLayer(config.hidden_dim, config, num_answer=2)
+            self.entity_mlp = OutputLayer(config.hidden_dim, config, num_answer=1)
+        else:
+            self.sent_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=2)
+            self.entity_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
 
         self.cache_S = 0
         self.cache_mask = None
@@ -784,18 +757,27 @@ class PredictionLayer(nn.Module):
         self.cache_mask = outer.data.new(S, S).copy_(torch.from_numpy(np_mask))
         return Variable(self.cache_mask, requires_grad=False)
 
-    def forward(self, batch, context_input, packing_mask=None, return_yp=False):
-        context_mask = batch['context_mask']
-        context_lens = batch['context_lens']
-        sent_mapping = batch['sent_mapping']
+    def forward(self, batch, context_input, graph_out, packing_mask=None, return_yp=False):
+        # Node Classification
+        ent_state = graph_out['graph_state'][:, 1+graph_out['max_para_num']+graph_out['max_sent_num']:, :]
 
+        gat_logit = self.sent_mlp(graph_out['graph_state'][:, :1+graph_out['max_para_num']+graph_out['max_sent_num'], :]) # N x max_sent x 1
+        para_prediction = gat_logit[:, 1:1+graph_out['max_para_num'], :].contiguous()
+        sent_prediction = gat_logit[:, 1+graph_out['max_para_num']:, :].contiguous()
+
+        ent_prediction = self.entity_mlp(ent_state).view(graph_out['N'], -1)
+        ent_prediction = ent_prediction - 1e30 * (1 - batch['ans_cand_mask'])
+
+        
+        # Span Prediction
+        context_mask = batch['context_mask']
 
         start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
         end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
         type_prediction = self.type_linear(context_input[:, 0, :])
 
         if not return_yp:
-            return start_prediction, end_prediction, type_prediction
+            return start_prediction, end_prediction, type_prediction, para_prediction, sent_prediction, ent_prediction
 
         outer = start_prediction[:, :, None] + end_prediction[:, None]
         outer_mask = self.get_output_mask(outer)
@@ -806,7 +788,7 @@ class PredictionLayer(nn.Module):
         # yp2: end
         yp1 = outer.max(dim=2)[0].max(dim=1)[1]
         yp2 = outer.max(dim=1)[0].max(dim=1)[1]
-        return start_prediction, end_prediction, type_prediction, yp1, yp2
+        return start_prediction, end_prediction, type_prediction,  para_prediction, sent_prediction, ent_prediction, yp1, yp2
 
 def get_weights(size, gain=1.414):
     weights = nn.Parameter(torch.zeros(size=size))
