@@ -34,7 +34,7 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter', 'hgn']
+    training_params = ['adapter', 'hgn', 'pred_layer']
     dict_params = {p: 0 for p in training_params}
 
     for n, p in graphqa.named_parameters():
@@ -58,10 +58,15 @@ def get_training_params(graphqa, print_stats=False):
         run["model/weights/num_fronzen_params"] = f"{num_fronzen_params/1e6:.2f}M"
         logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
         run["model/weights/num_total_params"] = f"{num_total_params/1e6:.2f}M"
+        
         logger.info(f"-----------------------")
         for k, v in dict_params.items():
             logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
             run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
+        encoder_params = count_parameters(graphqa.encoder) - dict_params['adapter']
+        logger.info(f"Number of encoder parameters: {encoder_params/1e6:.2f}M")
+        run["model/weights/encoder_params"] = f"{encoder_params/1e6:.2f}M"
+
         logger.info(f"-----------------------")
         logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
         run["model/weights/ratio_learned_params"] = num_training_params / num_fronzen_params
