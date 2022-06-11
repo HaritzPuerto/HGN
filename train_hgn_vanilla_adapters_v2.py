@@ -68,8 +68,8 @@ def get_training_params(graphqa, print_stats=False):
         run["model/weights/encoder_params"] = f"{encoder_params/1e6:.2f}M"
 
         logger.info(f"-----------------------")
-        logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
-        run["model/weights/ratio_learned_params"] = num_training_params / num_fronzen_params
+        print(f"Ratio learned parameters in encoder: { dict_params['adapter'] / encoder_params:.2f}")
+        run["model/weights/ratio_learned_params_in_enc"] = dict_params['adapter'] / encoder_params
     return params_name, params
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
