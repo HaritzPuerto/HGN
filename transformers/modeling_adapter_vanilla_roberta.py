@@ -237,7 +237,7 @@ class PredictionLayer(nn.Module):
         self.start_linear = OutputLayer(self.input_dim, config, num_answer=1)
         self.end_linear = OutputLayer(self.input_dim, config, num_answer=1)
         self.type_linear = OutputLayer(self.input_dim, config, num_answer=4)
-        self.sent_mlp = OutputLayer(self.input_dim*2, config, num_answer=1)
+        self.sent_mlp = OutputLayer(self.input_dim*2, config, num_answer=2)
 
         self.cache_S = 0
         self.cache_mask = None
@@ -261,7 +261,7 @@ class PredictionLayer(nn.Module):
         sent_start_output = torch.bmm(sent_start_mapping, context_input)   # N x max_sent x d
         sent_end_output = torch.bmm(sent_end_mapping, context_input)       # N x max_sent x d
         sent_state = torch.cat([sent_start_output, sent_end_output], dim=-1)  # N x max_sent x 2d       
-        sent_logit = self.sent_mlp(sent_state) # N x max_sent x 1
+        sent_logit = self.sent_mlp(sent_state) # N x max_sent x 2
 
         # span pred
         start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
