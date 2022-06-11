@@ -189,7 +189,7 @@ class RobertaModelAdapter4HotpotQA(nn.Module):
         super(RobertaModelAdapter4HotpotQA, self).__init__()     
         # Transformer Encoder
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, adapter_size=config.adapter_size)
-        self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
+        # self.pred_layer_projection = nn.Linear(config.input_dim, config.ctx_attn_hidden_dim) #this is needed to make the pred_layer equal to HGN's version
         self.pred_layer = PredictionLayer(config)
 
     def forward(
@@ -231,7 +231,7 @@ class PredictionLayer(nn.Module):
     def __init__(self, config):
         super(PredictionLayer, self).__init__()
         self.config = config
-        self.input_dim = config.ctx_attn_hidden_dim
+        self.input_dim = config.input_dim
         h_dim = config.hidden_dim
 
         self.hidden = h_dim
@@ -239,7 +239,7 @@ class PredictionLayer(nn.Module):
         self.start_linear = OutputLayer(self.input_dim, config, num_answer=1)
         self.end_linear = OutputLayer(self.input_dim, config, num_answer=1)
         self.type_linear = OutputLayer(self.input_dim, config, num_answer=4)
-        self.sent_mlp = OutputLayer(self.input_dim*2, config, num_answer=2)
+        self.sent_mlp = OutputLayer(self.input_dim*2, config, num_answer=1)
 
         self.cache_S = 0
         self.cache_mask = None
