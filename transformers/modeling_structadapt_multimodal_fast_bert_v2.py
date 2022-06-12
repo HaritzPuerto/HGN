@@ -1335,7 +1335,7 @@ class RNNWrapper(nn.Module):
             else:
                 input_dim_ = hidden_dim if not bidir else hidden_dim * 2
                 output_dim_ = hidden_dim
-            self.rnns.append(nn.GRU(input_dim_, output_dim_, 1, bidirectional=bidir, batch_first=True))
+            self.rnns.append(nn.LSTM(input_dim_, output_dim_, 1, bidirectional=bidir, batch_first=True))
         self.dropout = dropout
         self.concat = concat
         self.n_layer = n_layer
