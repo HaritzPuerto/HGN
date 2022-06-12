@@ -190,10 +190,7 @@ class MultiModalStructAdaptFastRoberta_v2(nn.Module):
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, hgn_config=config, adapter_size=config.adapter_size)
 
         q_dim = self.hidden_dim if config.q_update else config.input_dim
-        self.predict_layer = PredictionLayer(config, q_dim)
-        self.predict_layer_sent_mlp = OutputLayer(config.adapter_size*2, config, num_answer=1)
-        self.predict_layer_entity_mlp = OutputLayer(config.adapter_size*2, config, num_answer=1)
-
+        self.pred_layer = PredictionLayer(config, q_dim)
 
     def forward(
             self,
@@ -217,39 +214,15 @@ class MultiModalStructAdaptFastRoberta_v2(nn.Module):
                 are not taken into account for computing the loss.
             """
             # 1) get transformer token embeddings
-            input_state, graph_out = self.encoder(
+            input_state, graph_dict = self.encoder(
                 input_ids=batch['context_idxs'],
                 attention_mask=batch['context_mask'],
                 batch=batch
             )
-            # 2) node preds
-            ent_state = graph_out['graph_state'][:, 1+graph_out['max_para_num']+graph_out['max_sent_num']:, :]
-
-            gat_logit = self.predict_layer_sent_mlp(graph_out['graph_state'][:, :1+graph_out['max_para_num']+graph_out['max_sent_num'], :]) # N x max_sent x 1
-            para_logit = gat_logit[:, 1:1+graph_out['max_para_num'], :].contiguous()
-            sent_logit = gat_logit[:, 1+graph_out['max_para_num']:, :].contiguous()
-
-            ent_prediction = self.predict_layer_entity_mlp(ent_state).view(graph_out['N'], -1)
-            ent_prediction = ent_prediction - 1e30 * (1 - batch['ans_cand_mask'])
-
-            para_logits_aux = Variable(para_logit.data.new(para_logit.size(0), para_logit.size(1), 1).zero_())
-            para_prediction = torch.cat([para_logits_aux, para_logit], dim=-1).contiguous()
-
-            sent_logits_aux = Variable(sent_logit.data.new(sent_logit.size(0), sent_logit.size(1), 1).zero_())
-            sent_prediction = torch.cat([sent_logits_aux, sent_logit], dim=-1).contiguous()
-
-            # 3) span pred
-            query_mapping = batch['query_mapping']
-            predictions = self.predict_layer(batch, input_state[0], packing_mask=query_mapping, return_yp=return_yp)
-
-            if return_yp:
-                start, end, q_type, yp1, yp2 = predictions
-                return start, end, q_type, para_prediction, sent_prediction, ent_prediction, yp1, yp2
-            else:
-                start, end, q_type = predictions
-                return start, end, q_type, para_prediction, sent_prediction, ent_prediction
-
             
+            # 3) pred
+            query_mapping = batch['query_mapping']
+            return self.pred_layer(batch, input_state[0], graph_dict, packing_mask=query_mapping, return_yp=return_yp)
 
 
 class OutputLayer(nn.Module):
@@ -275,13 +248,18 @@ class PredictionLayer(nn.Module):
         super(PredictionLayer, self).__init__()
         self.config = config
         input_dim = config.input_dim
-        h_dim = config.hidden_dim
-
-        self.hidden = h_dim
 
         self.start_linear = OutputLayer(input_dim, config, num_answer=1)
         self.end_linear = OutputLayer(input_dim, config, num_answer=1)
         self.type_linear = OutputLayer(input_dim, config, num_answer=4)
+        # Node Classification
+        self.proj_linear = nn.Linear(config.adapter_size*2, config.hidden_dim*2)
+        if self.config.q_update:
+            self.sent_mlp = OutputLayer(config.adapter_size, config, num_answer=2)
+            self.entity_mlp = OutputLayer(config.adapter_size, config, num_answer=1)
+        else:
+            self.sent_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=2)
+            self.entity_mlp = OutputLayer(config.hidden_dim*2, config, num_answer=1)
 
         self.cache_S = 0
         self.cache_mask = None
@@ -295,18 +273,28 @@ class PredictionLayer(nn.Module):
         self.cache_mask = outer.data.new(S, S).copy_(torch.from_numpy(np_mask))
         return Variable(self.cache_mask, requires_grad=False)
 
-    def forward(self, batch, context_input, packing_mask=None, return_yp=False):
-        context_mask = batch['context_mask']
-        context_lens = batch['context_lens']
-        sent_mapping = batch['sent_mapping']
+    def forward(self, batch, context_input, graph_out, packing_mask=None, return_yp=False):
+        # Node Classification
+        ent_state = graph_out['graph_state'][:, 1+graph_out['max_para_num']+graph_out['max_sent_num']:, :]
+        input_sent = self.proj_linear(graph_out['graph_state'][:, :1+graph_out['max_para_num']+graph_out['max_sent_num'], :])
+        gat_logit = self.sent_mlp(input_sent) # N x max_sent x 2
+        para_prediction = gat_logit[:, 1:1+graph_out['max_para_num'], :].contiguous()
+        sent_prediction = gat_logit[:, 1+graph_out['max_para_num']:, :].contiguous()
 
+        input_ent = self.proj_linear(ent_state)
+        ent_prediction = self.entity_mlp(input_ent).view(graph_out['N'], -1)
+        ent_prediction = ent_prediction - 1e30 * (1 - batch['ans_cand_mask'])
+
+        
+        # Span Prediction
+        context_mask = batch['context_mask']
 
         start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
         end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
         type_prediction = self.type_linear(context_input[:, 0, :])
 
         if not return_yp:
-            return start_prediction, end_prediction, type_prediction
+            return start_prediction, end_prediction, type_prediction, para_prediction, sent_prediction, ent_prediction
 
         outer = start_prediction[:, :, None] + end_prediction[:, None]
         outer_mask = self.get_output_mask(outer)
@@ -317,4 +305,4 @@ class PredictionLayer(nn.Module):
         # yp2: end
         yp1 = outer.max(dim=2)[0].max(dim=1)[1]
         yp2 = outer.max(dim=1)[0].max(dim=1)[1]
-        return start_prediction, end_prediction, type_prediction, yp1, yp2
+        return start_prediction, end_prediction, type_prediction,  para_prediction, sent_prediction, ent_prediction, yp1, yp2

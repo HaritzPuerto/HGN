@@ -1006,11 +1006,7 @@ class HierarchicalGraphNetwork(nn.Module):
         # bert encoding query vec
         query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
         query_vec = self.query_proj(query_vec)
-        # attn_output, trunc_query_state = self.bi_attention(context_encoding,
-        #                                                    trunc_query_state,
-        #                                                    trunc_query_mapping)
-
-        # input_state = self.bi_attn_linear(attn_output) # N x L x d
+        
         input_state = self.proj(context_encoding)
         input_state = self.sent_lstm(input_state, batch['context_lens'])
 
