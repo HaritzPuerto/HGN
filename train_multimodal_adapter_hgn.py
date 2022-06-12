@@ -33,7 +33,7 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter', 'hgn']
+    training_params = ['adapter', 'hgn', 'pred_layer']
     dict_params = {p: 0 for p in training_params}
 
     for n, p in graphqa.named_parameters():
@@ -61,8 +61,13 @@ def get_training_params(graphqa, print_stats=False):
         for k, v in dict_params.items():
             logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
             run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
-        logger.info("Ratio learned parameters: %.4f", num_training_params / num_fronzen_params)
-        run["model/weights/ratio_learned_params"] = f"{num_training_params / num_fronzen_params:.4f}"
+        encoder_params = count_parameters(graphqa.encoder) - dict_params['adapter']
+        logger.info(f"Number of encoder parameters: {encoder_params/1e6:.2f}M")
+        run["model/weights/encoder_params"] = f"{encoder_params/1e6:.2f}M"
+
+        logger.info(f"-----------------------")
+        print(f"Ratio learned parameters in encoder: { dict_params['adapter'] / encoder_params:.2f}")
+        run["model/weights/ratio_learned_params_in_enc"] = dict_params['adapter'] / encoder_params
     return params_name, params
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
