@@ -566,10 +566,10 @@ class BertEncoder(nn.Module):
         encoder_hidden_states=None,
         encoder_attention_mask=None,
         batch=None,
-        graph_out=None,
     ):
         all_hidden_states = ()
         all_attentions = ()
+        graph_out=None
         for i, layer_module in enumerate(self.layer):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
