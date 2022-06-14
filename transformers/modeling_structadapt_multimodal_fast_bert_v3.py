@@ -407,9 +407,9 @@ class StructAdapt(nn.Module):
         self.hgn = HierarchicalGraphNetwork(hgn_new_config)
 
 
-    def forward(self, hidden_states, batch):
+    def forward(self, hidden_states, batch, graph_emb_prev_layer):
         norm_x = self.layer_norm(hidden_states)
-        return self.hgn(batch, norm_x)
+        return self.hgn(batch, norm_x, graph_emb_prev_layer)
 
     
 class GatedAttention(nn.Module):
@@ -480,10 +480,10 @@ class BiModalAdapter(nn.Module):
         self.projection = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
-    def forward(self, hidden_states_text, hidden_states_graph, batch):
+    def forward(self, hidden_states_text, hidden_states_graph, batch, graph_emb_prev_layer):
         layer_output_text = self.adapter_text(hidden_states_text) # text adapter
         
-        graph_out_dict = self.adapter_graph(hidden_states_graph, batch) # graph adapter
+        graph_out_dict = self.adapter_graph(hidden_states_graph, batch, graph_emb_prev_layer) # graph adapter
 
         layer_output = self.adapter_fusing_layer(layer_output_text,
                                                  graph_out_dict['graph_state'],
@@ -517,7 +517,8 @@ class BertLayer(nn.Module):
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        batch=None
+        batch=None,
+        graph_emb_prev_layer=None,
     ):
         self_attention_outputs = self.attention(hidden_states, attention_mask, head_mask)
         attention_output = self_attention_outputs[0]
@@ -543,7 +544,7 @@ class BertLayer(nn.Module):
         layer_output_graph = self.output(intermediate_output_graph, attention_output_graph)
         
         #### Top Adapter
-        layer_output, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
+        layer_output, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch, graph_emb_prev_layer)
         
 
         outputs = (layer_output,) + outputs
@@ -570,12 +571,13 @@ class BertEncoder(nn.Module):
         all_hidden_states = ()
         all_attentions = ()
         all_graph_emb = []
+        graph_out = None
         for i, layer_module in enumerate(self.layer):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             layer_outputs, graph_out = layer_module(
-                hidden_states, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask, batch=batch,
+                hidden_states, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask, batch=batch, graph_emb_prev_layer=graph_out,
             )
             hidden_states = layer_outputs[0]
             all_graph_emb.append(graph_out)
@@ -1002,7 +1004,7 @@ class HierarchicalGraphNetwork(nn.Module):
         for _ in range(self.config.num_gnn_layers):
             self.graph_blocks.append(GraphBlock(self.config.q_attn, config))
 
-    def forward(self, batch, context_encoding):
+    def forward(self, batch, context_encoding, graph_emb_prev_layer):
         query_mapping = batch['query_mapping']
 
         # extract query encoding
@@ -1016,7 +1018,7 @@ class HierarchicalGraphNetwork(nn.Module):
         input_state = self.sent_lstm(input_state, batch['context_lens'])
 
         for l in range(self.config.num_gnn_layers):
-            graph_out_dict = self.graph_blocks[l](batch, input_state, query_vec)
+            graph_out_dict = self.graph_blocks[l](batch, input_state, query_vec, graph_emb_prev_layer)
 
         return graph_out_dict
         
@@ -1240,7 +1242,7 @@ class GraphBlock(nn.Module):
         else:
             self.gat = AttentionLayer(self.hidden_dim*2, self.hidden_dim*2, config.num_gnn_heads, q_attn=q_attn, config=self.config)
 
-    def forward(self, batch, input_state, query_vec):
+    def forward(self, batch, input_state, query_vec, graph_emb_prev_layer=None):
         para_start_mapping = batch['para_start_mapping']
         para_end_mapping = batch['para_end_mapping']
         sent_start_mapping = batch['sent_start_mapping']
@@ -1270,6 +1272,8 @@ class GraphBlock(nn.Module):
         else:
             graph_state = self.gat_linear(query_vec)
             graph_state = torch.cat([graph_state.unsqueeze(1), para_state, sent_state, ent_state], dim=1)
+        if graph_emb_prev_layer is not None:
+            graph_state = graph_state + graph_emb_prev_layer['graph_state'] # residual connection
         node_mask = torch.cat([torch.ones(N, 1).to(self.config.device), batch['para_mask'], batch['sent_mask'], batch['ent_mask']], dim=-1).unsqueeze(-1)
 
         graph_adj = batch['graphs']
