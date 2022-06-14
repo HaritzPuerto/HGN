@@ -39,7 +39,7 @@ from typing import Any, ContextManager, List, Tuple
 from typing import Optional, Tuple
 
 from .file_utils import add_start_docstrings
-from .modeling_structadapt_multimodal_fast_bert_v2 import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
+from .modeling_structadapt_multimodal_fast_bert_v4 import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
 
 
 logger = logging.getLogger(__name__)
