@@ -170,9 +170,6 @@ if is_torch_available():
     from .modeling_adapter_vanilla_hgn_v2 import (
         VanillaAdapter_HGN_v2,
     )
-    from .modeling_structadapt_roberta import (
-        StructAdaptRoberta,
-    )
     from .modeling_structadapt_multimodal_roberta import (
         MultiModalStructAdaptRoberta,
     )
@@ -187,6 +184,9 @@ if is_torch_available():
     )
     from .modeling_structadapt_multimodal_fast_roberta_v4 import (
         MultiModalStructAdaptFastRoberta_v4,
+    )
+    from .modeling_structadapt_fast_roberta import (
+        StructAdaptFastRoberta,
     )
     from .modeling_multimodal_adapter_roberta import (
         MultiModalAdapterRoberta,
