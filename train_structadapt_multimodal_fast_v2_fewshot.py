@@ -347,14 +347,18 @@ for epoch in train_iterator:
     for key, value in metrics.items():
         run[f"dev/few_shot/{key}"].log(round(value*100, 2))
     run["dev/few_shot/preds"].log(answer_dict)
+    logger.info(f"Current f1: {metrics['f1']}, best f1: {best_f1}. Saving: {best_f1 <= metrics['f1']}")
     if metrics['f1'] >= best_f1:
         best_f1 = metrics['f1']
         best_epoch = epoch
         best_threshold = threshold
-        torch.save(model.state_dict(), args.exp_name + "_best_model.bin")
+        model_path = os.path.join(args.exp_name, 'best_model.bin')
+        logger.info(f"Saving model {model_path}")
+        torch.save(model.state_dict(), model_path)
     model.train()
 
-model.load_state_dict(torch.load(args.exp_name + "_best_model.bin"))
+model_path = os.path.join(args.exp_name, 'best_model.bin')
+model.load_state_dict(torch.load(model_path))
 test_example_dict = helper.test_example_dict
 test_feature_dict = helper.test_feature_dict
 test_dataloader = helper.test_loader
