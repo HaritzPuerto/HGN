@@ -94,7 +94,10 @@ def default_train_parser():
                         help="configuration file for command parser")
     parser.add_argument("--dev_gold_file",
                         type=str,
-                        default=join(DATASET_FOLDER, 'data_raw', 'hotpot_dev_distractor_v1.json'))
+                        default=join(DATASET_FOLDER, 'data_raw', 'hotpot_ih_dev_distractor_v1.json'))
+    parser.add_argument("--test_gold_file",
+                        type=str,
+                        default=join(DATASET_FOLDER, 'data_raw', 'hotpot_ih_test_distractor_v1.json'))
 
     # model
     parser.add_argument("--model_type",
