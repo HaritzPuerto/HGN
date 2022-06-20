@@ -433,7 +433,7 @@ class DataHelper:
     @property
     def train_example_dict(self):
         if self.__train_example_dict__ is None:
-            self.__train_example_dict__ = {e.qas_id: e for e in self.train_examples}
+            self.__train_example_dict__ = {e.qas_id: e for e in self.train_examples[:self.config.num_samples]}
         return self.__train_example_dict__
 
     @property
@@ -456,7 +456,10 @@ class DataHelper:
         return self.dev_features, self.dev_example_dict, self.dev_graphs
 
     def load_train(self):
-        return self.train_features, self.train_example_dict, self.train_graphs
+        list_keys = list(self.train_example_dict.keys())
+        sample_train_graphs = {k: self.train_graphs[k] for k in list_keys} 
+        sample_train_features = [f for f in self.train_features if f.qas_id in list_keys]
+        return sample_train_features, self.train_example_dict, sample_train_graphs
 
     @property
     def dev_loader(self):
