@@ -336,18 +336,27 @@ class DataHelper:
         self.suffix = '.pkl.gz' if gz else '.pkl'
 
         self.data_dir = join(DATASET_FOLDER, 'data_feat')
+        
+        with open(join(DATASET_FOLDER, 'data_raw/list_ids_ih_dev.json'), 'r') as f:
+            self.list_ids_ih_dev = json.load(f)
+        with open(join(DATASET_FOLDER, 'data_raw/list_ids_ih_test.json'), 'r') as f:
+            self.list_ids_ih_test = json.load(f)
 
         self.__train_features__ = None
         self.__dev_features__ = None
+        self.__test_features__ = None
 
         self.__train_examples__ = None
         self.__dev_examples__ = None
-
+        self.__test_examples__ = None
+        
         self.__train_graphs__ = None
         self.__dev_graphs__ = None
-
+        self.__test_graph__ = None
+        
         self.__train_example_dict__ = None
         self.__dev_example_dict__ = None
+        self.__test_example_dict__ = None
 
         self.config = config
 
@@ -439,9 +448,15 @@ class DataHelper:
     @property
     def dev_example_dict(self):
         if self.__dev_example_dict__ is None:
-            self.__dev_example_dict__ = {e.qas_id: e for e in self.dev_examples}
+            self.__dev_example_dict__ = {e.qas_id: e for e in self.dev_examples if e.qas_id in self.list_ids_ih_dev}
         return self.__dev_example_dict__
 
+    @property
+    def test_example_dict(self):
+        if self.__test_example_dict__ is None:
+            self.__test_example_dict__ = {e.qas_id: e for e in self.dev_examples if e.qas_id in self.list_ids_ih_test}
+        return self.__test_example_dict__
+    
     # Feature dict
     @property
     def train_feature_dict(self):
@@ -449,12 +464,24 @@ class DataHelper:
 
     @property
     def dev_feature_dict(self):
-        return {e.qas_id: e for e in self.dev_features}
-
+        return {e.qas_id: e for e in self.dev_features if e.qas_id in self.list_ids_ih_dev}
+        
+    @property
+    def test_feature_dict(self):
+        return {e.qas_id: e for e in self.dev_features if e.qas_id in self.list_ids_ih_test}
+    
     # Load
     def load_dev(self):
-        return self.dev_features, self.dev_example_dict, self.dev_graphs
-
+        dev_graphs = {k: self.dev_graphs[k] for k in self.list_ids_ih_dev} 
+        dev_features = [f for f in self.dev_features if f.qas_id in self.list_ids_ih_dev]
+        return dev_features, self.dev_example_dict, dev_graphs
+    
+     # Load
+    def load_test(self):
+        self.test_graphs = {k: self.dev_graphs[k] for k in self.list_ids_ih_test} 
+        self.test_features = [f for f in self.dev_features if f.qas_id in self.list_ids_ih_test]
+        return self.test_features, self.test_example_dict, self.test_graphs
+    
     def load_train(self):
         list_keys = list(self.train_example_dict.keys())
         sample_train_graphs = {k: self.train_graphs[k] for k in list_keys} 
@@ -464,6 +491,18 @@ class DataHelper:
     @property
     def dev_loader(self):
         return self.DataIterator(*self.load_dev(),
+                                 bsz=self.config.eval_batch_size,
+                                 device=self.config.device,
+                                 para_limit=self.config.max_para_num,
+                                 sent_limit=self.config.max_sent_num,
+                                 ent_limit=self.config.max_entity_num,
+                                 ans_ent_limit=self.config.max_ans_ent_num,
+                                 mask_edge_types=self.config.mask_edge_types,
+                                 sequential=True)
+        
+    @property
+    def test_loader(self):
+        return self.DataIterator(*self.load_test(),
                                  bsz=self.config.eval_batch_size,
                                  device=self.config.device,
                                  para_limit=self.config.max_para_num,
