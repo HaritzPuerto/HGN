@@ -120,7 +120,7 @@ def compute_loss(args, batch, start, end, para, sent, ent, q_type):
     return loss, loss_span, loss_type, loss_sup, loss_ent, loss_para
 
 
-def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file):
+def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file, thresholds=None):
     model.eval()
 
     answer_dict = {}
@@ -129,7 +129,11 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
 
     dataloader.refresh()
 
-    thresholds = np.arange(0.1, 1.0, 0.05)
+    if thresholds is None:
+        thresholds = np.arange(0.1, 1.0, 0.05)
+    else:
+        thresholds = np.array([thresholds])
+
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
@@ -283,8 +287,9 @@ if args.local_rank in [-1, 0]:
     tb_writer = SummaryWriter(args.exp_name)
 
 model.zero_grad()
-list_few_shot_eval = np.array([100, 500, 1000, 2000, 3000])/args.batch_size
-
+list_few_shot_eval = np.array([100])/args.batch_size
+best_f1 = 0
+best_threshold = 0
 train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", file=sys.stdout, disable=args.local_rank not in [-1, 0])
 for epoch in train_iterator:
     epoch_iterator = tqdm(train_dataloader, desc="Iteration",file=sys.stdout, disable=args.local_rank not in [-1, 0])
@@ -346,8 +351,6 @@ for epoch in train_iterator:
 
             model.train()
 
-    torch.save({k: v.cpu() for k, v in model.state_dict().items()},
-                join(args.exp_name, f'model_{epoch+1}.pkl'))
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
         output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
@@ -355,29 +358,30 @@ for epoch in train_iterator:
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
         for key, value in metrics.items():
-            run[f"dev/epoch/{key}"].log(round(value*100, 2))
-        run["dev/epoch/preds"].log(answer_dict)
+            run[f"dev/{key}"].log(round(value*100, 2))
+        run["dev/preds"].log(answer_dict)
+        logger.info(f"Current f1: {metrics['f1']}, best f1: {best_f1}. Saving: {best_f1 <= metrics['f1']}")
+        if metrics['f1'] >= best_f1:
+            best_f1 = metrics['f1']
+            best_epoch = epoch
+            best_threshold = threshold
+            model_path = os.path.join(args.exp_name, 'best_model.bin')
+            logger.info(f"Saving model {model_path}")
+            torch.save(model.state_dict(), model_path)
+        model.train()
 
-        if metrics['joint_f1'] >= best_joint_f1:
-            best_joint_f1 = metrics['joint_f1']
-            torch.save({'epoch': epoch+1,
-                        'lr': scheduler.get_lr()[0],
-                        'model': 'model.pkl',
-                        'best_joint_f1': best_joint_f1,
-                        'threshold': threshold},
-                       join(args.exp_name, f'cached_config.bin')
-            )
-        with open(join(args.exp_name, f'metrics.json'), 'w+') as f:
-            json.dump(metrics, f)
-        # torch.save({k: v.cpu() for k, v in encoder.state_dict().items()},
-        #             join(args.exp_name, f'encoder_{epoch+1}.pkl'))
-        # torch.save({k: v.cpu() for k, v in model.state_dict().items()},
-        #             join(args.exp_name, f'model_{epoch+1}.pkl'))
 
-        for key, val in metrics.items():
-            tb_writer.add_scalar(key, val, epoch)
+model_path = os.path.join(args.exp_name, 'best_model.bin')
+model.load_state_dict(torch.load(model_path))
+test_example_dict = helper.test_example_dict
+test_feature_dict = helper.test_feature_dict
+test_dataloader = helper.test_loader
 
-if args.local_rank in [-1, 0]:
-    tb_writer.close()
-
+metrics, threshold, answer_dict = eval_model(args, model,
+                                test_dataloader, test_example_dict, test_feature_dict,
+                                output_pred_file, output_eval_file, args.test_gold_file, best_threshold)
+logger.info(f"Best threshold: {best_threshold} vs. {threshold}")
+for key, value in metrics.items():
+    run[f"test/{key}"] = round(value*100, 2)
+run["test/preds"] = answer_dict
 run.stop()
