@@ -165,7 +165,10 @@ else:
 # Set Encoder and Model
 encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
 model = HierarchicalGraphNetwork(config=args)
-
+num_enc_params = count_parameters(encoder)
+num_graph_params = count_parameters(model)
+run["model/weights/num_training_params"] = f"{(num_enc_params+num_graph_params) /1e6:.2f}M"
+run[f"model/weights/HGN_params"] = f"{(num_graph_params) /1e6:.2f}M"
 if encoder_path is not None:
     encoder.load_state_dict(torch.load(encoder_path))
 if model_path is not None:
