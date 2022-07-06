@@ -188,6 +188,9 @@ if is_torch_available():
     from .modeling_structadapt_multimodal_fast_roberta_v4_bottom_1 import (
         MultiModalStructAdaptFastRoberta_v4_bottom_1,
     )
+    from .modeling_structadapt_multimodal_fast_roberta_v5 import (
+        MultiModalStructAdaptFastRoberta_v5,
+    )
     from .modeling_structadapt_fast_roberta import (
         StructAdaptFastRoberta,
     )
